@@ -1,0 +1,32 @@
+{
+  "module": "irons_spells",
+  "description": "Iron's Spells 'n' Spellbooks Module — Brain mapping and role definitions (SHELL).",
+
+  "default_brain_provider": "gemini",
+
+  "roles": {
+    "arcanist": {
+      "description": "A master spellcaster who commands powerful offensive spells.",
+      "brain_provider": "gemini",
+      "goals": ["engage_hostiles", "hold_position"]
+    },
+    "healer": {
+      "description": "A support caster who heals allies and wards off undead.",
+      "brain_provider": "gemini",
+      "goals": ["hold_position", "resupply_allies"]
+    },
+    "warlock": {
+      "description": "A dark spellcaster wielding forbidden summoning and curse magic.",
+      "brain_provider": "gemini",
+      "goals": ["engage_priority_targets", "suppress_hostiles"]
+    }
+  },
+
+  "npc_assignments": {
+    "_comment": "Maps NPC entity IDs to roles.",
+    "_example": {
+      "npc_entity_101": { "role": "arcanist", "name": "Valdris the Arcanist" },
+      "npc_entity_102": { "role": "healer",   "name": "Sister Maren" }
+    }
+  }
+}

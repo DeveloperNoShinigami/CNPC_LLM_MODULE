@@ -1,125 +1,112 @@
-/**
- * core/tacz_models/gemini/model_brain.js
- *
- * Gemini brain logic for TACZ-module NPCs.
- *
- * This file defines HOW the Gemini AI provider is prompted when driving a
- * TACZ NPC.  It builds the system prompt that is sent to the Gemini API,
- * incorporating full game-state awareness (time, weather, biome, health,
- * nearby entities, etc.).
- *
- * The in-game weapon / loadout the NPC carries is supplied at runtime via
- * the `context` object (context.npc.equipment) — it does NOT affect which
- * model_brain.js is loaded.  The folder name (`gemini/`) only identifies
- * the AI provider.
- *
- * ──────────────────────────────────────────────────────────────
- * REQUIRED EXPORTS
- * ──────────────────────────────────────────────────────────────
- *   buildSystemPrompt(context, mode) → string
- *   brainProvider                   → string   (must match a key in master_config.json > brain_providers)
- */
+// core/tacz_models/gemini/model_brain.js
+//
+// CNPC ES5 Scripting Standard — Rhino JavaScript Engine
+//
+// Gemini brain logic for TACZ-module NPCs.
+//
+// Defines HOW the Gemini AI provider is prompted when driving a TACZ NPC.
+// Builds the system prompt sent to the Gemini API, incorporating full
+// game-state awareness (time, weather, biome, health, nearby entities, etc.).
+//
+// The NPC's in-game weapon / loadout is conveyed via context.npc.equipment.
+// The folder name (gemini/) identifies the AI provider only.
+//
+// This file self-registers with ModelBrainRegistry on load.
+// Load order: load this file AFTER ai_manager.js (which defines ModelBrainRegistry).
 
-'use strict';
+var _TACZ_GEMINI_BRAIN = (function() {
 
-/** AI provider this brain module targets. Must match a key in master_config.json. */
-const brainProvider = 'gemini';
+  var brainProvider = "gemini"
 
-/**
- * Build the complete system prompt for a Gemini-driven TACZ NPC.
- *
- * @param {object} context            - Rich game-state context from context_builder.js
- * @param {string} context.npc        - NPC state (name, health, equipment, currentTask)
- * @param {string} context.player     - Player state (name, health, heldItem)
- * @param {string} context.world      - World state (time, weather, biome)
- * @param {string} context.nearby     - Nearby entities (hostiles[], friendlies[])
- * @param {string} mode               - "ACK" | "LISTENING" | "CLOSING"
- * @returns {string}
- */
-function buildSystemPrompt(context, mode) {
-  const {
-    npc    = {},
-    player = {},
-    world  = {},
-    nearby = {},
-  } = context;
+  // ── System prompt builder ──────────────────────────────────────────────────
 
-  // ── Persona block ─────────────────────────────────────────────────────────
-  const basePersona = `
-You are "${npc.name || 'Soldier'}", a battle-ready TACZ operative.
-You speak in a clipped, professional military tone — calm under pressure, direct, always mission-focused.
-You are loyal to your unit and treat unknown players with measured caution.
-Your current loadout determines how you approach threats: heavy weapons = direct assault,
-light weapons = stealth and flanking.
-You NEVER break character. You NEVER reveal you are an AI.
-`.trim();
+  function buildSystemPrompt(context, mode) {
+    var npc    = context.npc    || {}
+    var player = context.player || {}
+    var world  = context.world  || {}
+    var nearby = context.nearby || {}
 
-  // ── World-awareness block ─────────────────────────────────────────────────
-  const worldAwareness = `
---- CURRENT SITUATION ---
-Time       : ${world.time    || 'unknown'}
-Weather    : ${world.weather || 'clear'}
-Biome      : ${world.biome   || 'unknown'}
+    var equipment = (npc.equipment && npc.equipment.length > 0)
+      ? npc.equipment.join(", ")
+      : "standard loadout"
 
---- YOUR STATUS ---
-Health     : ${npc.health    || '?'} / ${npc.maxHealth || '?'} HP
-Loadout    : ${(npc.equipment || []).join(', ') || 'standard loadout'}
-Task       : ${npc.currentTask || 'standing by'}
+    var basePersona =
+      "You are \"" + (npc.name || "Soldier") + "\", a battle-ready TACZ operative.\n" +
+      "You speak in a clipped, professional military tone — calm under pressure, direct, always mission-focused.\n" +
+      "You are loyal to your unit and treat unknown players with measured caution.\n" +
+      "Your current loadout determines how you approach threats: heavy weapons = direct assault, light weapons = stealth and flanking.\n" +
+      "You NEVER break character. You NEVER reveal you are an AI."
 
---- PLAYER ---
-Name       : ${player.name     || 'unknown'}
-Health     : ${player.health   || '?'} / ${player.maxHealth || '?'} HP
-Held item  : ${player.heldItem || 'nothing'}
+    var worldAwareness =
+      "--- CURRENT SITUATION ---\n" +
+      "Time       : " + (world.time    || "unknown") + "\n" +
+      "Weather    : " + (world.weather || "clear")   + "\n" +
+      "Biome      : " + (world.biome   || "unknown") + "\n\n" +
+      "--- YOUR STATUS ---\n" +
+      "Health     : " + (npc.health    || "?") + " / " + (npc.maxHealth || "?") + " HP\n" +
+      "Loadout    : " + equipment + "\n" +
+      "Task       : " + (npc.currentTask || "standing by") + "\n\n" +
+      "--- PLAYER ---\n" +
+      "Name       : " + (player.name     || "unknown") + "\n" +
+      "Health     : " + (player.health   || "?") + " / " + (player.maxHealth || "?") + " HP\n" +
+      "Held item  : " + (player.heldItem || "nothing") + "\n\n" +
+      "--- NEARBY ENTITIES ---\n" +
+      "Hostiles  (\u226432 blocks): " + _formatEntities(nearby.hostiles) + "\n" +
+      "Friendlies(\u226432 blocks): " + _formatEntities(nearby.friendlies)
 
---- NEARBY ENTITIES ---
-Hostiles  (≤32 blocks): ${_formatEntities(nearby.hostiles)}
-Friendlies(≤32 blocks): ${_formatEntities(nearby.friendlies)}
-`.trim();
+    var modeInstructions = _getModeInstructions(mode, npc.name)
 
-  // ── Mode-specific instructions ────────────────────────────────────────────
-  const modeInstructions = _getModeInstructions(mode, npc.name);
-
-  return `${basePersona}\n\n${worldAwareness}\n\n${modeInstructions}`;
-}
-
-// ── Private helpers ───────────────────────────────────────────────────────────
-
-function _getModeInstructions(mode, npcName) {
-  const name = npcName || 'Soldier';
-  switch (mode) {
-    case 'ACK':
-      return (
-        'A player has right-clicked you. ' +
-        'Respond with ONE short, sharp military acknowledgment (max 15 words). ' +
-        'Signal you are alert and listening.'
-      );
-
-    case 'LISTENING':
-      return (
-        'You are in an active conversation with the player. ' +
-        'Stay in your military persona at all times. ' +
-        'If the player addresses you by name and issues an order, acknowledge and briefly describe your intended action. ' +
-        'Reference the environment (time, weather, threats) naturally when relevant. ' +
-        'Keep responses concise — no more than 3 sentences unless a full sitrep is explicitly requested.'
-      );
-
-    case 'CLOSING':
-      return (
-        `The player is ending the conversation. ` +
-        `Deliver a crisp military sign-off (e.g. "Copy that. ${name} out.", "Roger. Standing by."). ` +
-        `Maximum 2 sentences.`
-      );
-
-    default:
-      return 'Respond naturally within your military persona.';
+    return basePersona + "\n\n" + worldAwareness + "\n\n" + modeInstructions
   }
-}
 
-function _formatEntities(entities) {
-  if (!entities || entities.length === 0) return 'none';
-  return entities
-    .map(e => `${e.type || 'unknown'} (${e.distance || '?'} blocks)`)
-    .join(', ');
-}
+  // ── Mode instructions ──────────────────────────────────────────────────────
 
-module.exports = { buildSystemPrompt, brainProvider };
+  function _getModeInstructions(mode, npcName) {
+    var name = npcName || "Soldier"
+    if (mode === "ACK") {
+      return (
+        "A player has right-clicked you. " +
+        "Respond with ONE short, sharp military acknowledgment (max 15 words). " +
+        "Signal you are alert and listening."
+      )
+    }
+    if (mode === "LISTENING") {
+      return (
+        "You are in an active conversation with the player. " +
+        "Stay in your military persona at all times. " +
+        "If the player addresses you by name and issues an order, acknowledge and briefly describe your intended action. " +
+        "Reference the environment (time, weather, threats) naturally when relevant. " +
+        "Keep responses concise — no more than 3 sentences unless a full sitrep is explicitly requested."
+      )
+    }
+    if (mode === "CLOSING") {
+      return (
+        "The player is ending the conversation. " +
+        "Deliver a crisp military sign-off (e.g. \"Copy that. " + name + " out.\", \"Roger. Standing by.\"). " +
+        "Maximum 2 sentences."
+      )
+    }
+    return "Respond naturally within your military persona."
+  }
+
+  // ── Entity formatter ───────────────────────────────────────────────────────
+
+  function _formatEntities(entities) {
+    if (!entities || entities.length === 0) return "none"
+    var parts = []
+    for (var i = 0; i < entities.length; i++) {
+      var e = entities[i]
+      parts.push((e.type || "unknown") + " (" + (e.distance || "?") + " blocks)")
+    }
+    return parts.join(", ")
+  }
+
+  // ── Self-register with ModelBrainRegistry ──────────────────────────────────
+
+  ModelBrainRegistry.register("tacz", "gemini", {
+    brainProvider: brainProvider,
+    buildSystemPrompt: buildSystemPrompt
+  })
+
+})()
+

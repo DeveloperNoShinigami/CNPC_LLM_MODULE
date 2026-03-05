@@ -1,106 +1,106 @@
-/**
- * core/tacz_models/openrouter/model_brain.js
- *
- * OpenRouter brain logic for TACZ-module NPCs.
- *
- * Mirrors the structure of `gemini/model_brain.js` but targets the OpenRouter
- * provider (which can front many open-source and commercial models via a single
- * API endpoint).  The persona and game-state awareness blocks are identical; only
- * `brainProvider` differs, instructing BrainFactory to instantiate an OpenRouter
- * brain instead of a Gemini one.
- *
- * ──────────────────────────────────────────────────────────────
- * REQUIRED EXPORTS
- * ──────────────────────────────────────────────────────────────
- *   buildSystemPrompt(context, mode) → string
- *   brainProvider                   → string
- *
- * NOTE: Add an "openrouter" entry to master_config.json > brain_providers
- * and create core/openrouter_brain.js (or equivalent) before enabling this.
- */
+// core/tacz_models/openrouter/model_brain.js
+//
+// CNPC ES5 Scripting Standard — Rhino JavaScript Engine
+//
+// OpenRouter brain logic for TACZ-module NPCs.
+//
+// Mirrors the structure of gemini/model_brain.js but targets the OpenRouter
+// provider, which can front many open-source and commercial models via a single
+// API endpoint.  The persona and game-state awareness blocks are identical;
+// only brainProvider differs.
+//
+// Ensure master_config.json has an "openrouter" entry under brain_providers
+// and that core/openrouter_brain.js is loaded before this file.
+//
+// This file self-registers with ModelBrainRegistry on load.
+// Load order: load this file AFTER ai_manager.js (which defines ModelBrainRegistry).
 
-'use strict';
+var _TACZ_OPENROUTER_BRAIN = (function() {
 
-/** AI provider key — must match a key in master_config.json > brain_providers. */
-const brainProvider = 'openrouter';
+  var brainProvider = "openrouter"
 
-/**
- * Build the complete system prompt for an OpenRouter-driven TACZ NPC.
- *
- * @param {object} context - Rich game-state context from context_builder.js
- * @param {string} mode    - "ACK" | "LISTENING" | "CLOSING"
- * @returns {string}
- */
-function buildSystemPrompt(context, mode) {
-  const {
-    npc    = {},
-    player = {},
-    world  = {},
-    nearby = {},
-  } = context;
+  // ── System prompt builder ──────────────────────────────────────────────────
 
-  const basePersona = `
-You are "${npc.name || 'Operative'}", a hardened TACZ field operative.
-You speak in a precise, tactical tone — every word is deliberate.
-You assess threats quickly and relay information efficiently.
-Your loadout shapes your tactics: each weapon dictates a different combat philosophy.
-You NEVER break character. You NEVER reveal you are an AI.
-`.trim();
+  function buildSystemPrompt(context, mode) {
+    var npc    = context.npc    || {}
+    var player = context.player || {}
+    var world  = context.world  || {}
+    var nearby = context.nearby || {}
 
-  const worldAwareness = `
---- CURRENT SITUATION ---
-Time       : ${world.time    || 'unknown'}
-Weather    : ${world.weather || 'clear'}
-Biome      : ${world.biome   || 'unknown'}
+    var equipment = (npc.equipment && npc.equipment.length > 0)
+      ? npc.equipment.join(", ")
+      : "standard loadout"
 
---- YOUR STATUS ---
-Health     : ${npc.health    || '?'} / ${npc.maxHealth || '?'} HP
-Loadout    : ${(npc.equipment || []).join(', ') || 'standard loadout'}
-Task       : ${npc.currentTask || 'standing by'}
+    var basePersona =
+      "You are \"" + (npc.name || "Operative") + "\", a hardened TACZ field operative.\n" +
+      "You speak in a precise, tactical tone — every word is deliberate.\n" +
+      "You assess threats quickly and relay information efficiently.\n" +
+      "Your loadout shapes your tactics: each weapon dictates a different combat philosophy.\n" +
+      "You NEVER break character. You NEVER reveal you are an AI."
 
---- PLAYER ---
-Name       : ${player.name     || 'unknown'}
-Health     : ${player.health   || '?'} / ${player.maxHealth || '?'} HP
-Held item  : ${player.heldItem || 'nothing'}
+    var worldAwareness =
+      "--- CURRENT SITUATION ---\n" +
+      "Time       : " + (world.time    || "unknown") + "\n" +
+      "Weather    : " + (world.weather || "clear")   + "\n" +
+      "Biome      : " + (world.biome   || "unknown") + "\n\n" +
+      "--- YOUR STATUS ---\n" +
+      "Health     : " + (npc.health    || "?") + " / " + (npc.maxHealth || "?") + " HP\n" +
+      "Loadout    : " + equipment + "\n" +
+      "Task       : " + (npc.currentTask || "standing by") + "\n\n" +
+      "--- PLAYER ---\n" +
+      "Name       : " + (player.name     || "unknown") + "\n" +
+      "Health     : " + (player.health   || "?") + " / " + (player.maxHealth || "?") + " HP\n" +
+      "Held item  : " + (player.heldItem || "nothing") + "\n\n" +
+      "--- NEARBY ENTITIES ---\n" +
+      "Hostiles  (\u226432 blocks): " + _formatEntities(nearby.hostiles) + "\n" +
+      "Friendlies(\u226432 blocks): " + _formatEntities(nearby.friendlies)
 
---- NEARBY ENTITIES ---
-Hostiles  (≤32 blocks): ${_formatEntities(nearby.hostiles)}
-Friendlies(≤32 blocks): ${_formatEntities(nearby.friendlies)}
-`.trim();
+    var modeInstructions = _getModeInstructions(mode, npc.name)
 
-  const modeInstructions = _getModeInstructions(mode, npc.name);
-
-  return `${basePersona}\n\n${worldAwareness}\n\n${modeInstructions}`;
-}
-
-function _getModeInstructions(mode, npcName) {
-  const name = npcName || 'Operative';
-  switch (mode) {
-    case 'ACK':
-      return (
-        'Player has your attention. One sharp, tactical acknowledgment. Max 15 words.'
-      );
-    case 'LISTENING':
-      return (
-        'Active conversation. Stay tactical and in-character. ' +
-        'Confirm orders with a brief action plan. Reference environment when relevant. ' +
-        'Max 3 sentences.'
-      );
-    case 'CLOSING':
-      return (
-        `Player is signing off. Brief tactical farewell — e.g. "Understood. ${name} holding position." ` +
-        `Two sentences maximum.`
-      );
-    default:
-      return 'Respond naturally within your tactical operative persona.';
+    return basePersona + "\n\n" + worldAwareness + "\n\n" + modeInstructions
   }
-}
 
-function _formatEntities(entities) {
-  if (!entities || entities.length === 0) return 'none';
-  return entities
-    .map(e => `${e.type || 'unknown'} (${e.distance || '?'} blocks)`)
-    .join(', ');
-}
+  // ── Mode instructions ──────────────────────────────────────────────────────
 
-module.exports = { buildSystemPrompt, brainProvider };
+  function _getModeInstructions(mode, npcName) {
+    var name = npcName || "Operative"
+    if (mode === "ACK") {
+      return "Player has your attention. One sharp, tactical acknowledgment. Max 15 words."
+    }
+    if (mode === "LISTENING") {
+      return (
+        "Active conversation. Stay tactical and in-character. " +
+        "Confirm orders with a brief action plan. Reference environment when relevant. " +
+        "Max 3 sentences."
+      )
+    }
+    if (mode === "CLOSING") {
+      return (
+        "Player is signing off. Brief tactical farewell — e.g. \"Understood. " + name + " holding position.\" " +
+        "Two sentences maximum."
+      )
+    }
+    return "Respond naturally within your tactical operative persona."
+  }
+
+  // ── Entity formatter ───────────────────────────────────────────────────────
+
+  function _formatEntities(entities) {
+    if (!entities || entities.length === 0) return "none"
+    var parts = []
+    for (var i = 0; i < entities.length; i++) {
+      var e = entities[i]
+      parts.push((e.type || "unknown") + " (" + (e.distance || "?") + " blocks)")
+    }
+    return parts.join(", ")
+  }
+
+  // ── Self-register with ModelBrainRegistry ──────────────────────────────────
+
+  ModelBrainRegistry.register("tacz", "openrouter", {
+    brainProvider: brainProvider,
+    buildSystemPrompt: buildSystemPrompt
+  })
+
+})()
+

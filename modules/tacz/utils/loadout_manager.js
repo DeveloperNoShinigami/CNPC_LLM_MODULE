@@ -1,132 +1,96 @@
-/**
- * modules/tacz/utils/loadout_manager.js
- *
- * Utility: NPC Loadout Manager for TACZ NPCs.
- *
- * Manages the weapons, equipment, and ammunition that a TACZ NPC carries.
- * Provides helpers for:
- *   - Building a loadout string for inclusion in AI context.
- *   - Updating an NPC's loadout at runtime.
- *   - Querying loadout details (primary weapon, secondary, attachments).
- *
- * In a full CNPC + TACZ integration, the `apply()` method would call the
- * appropriate CNPC/TACZ scripting API to actually equip the NPC.
- */
+// modules/tacz/utils/loadout_manager.js — NPC Loadout Manager for TACZ NPCs.
+//
+// CNPC ES5 Scripting Standard — Rhino JavaScript Engine
+//
+// Manages the weapons, equipment, and ammunition that a TACZ NPC carries.
+// Provides helpers for:
+//   - Building a loadout string for AI context inclusion.
+//   - Updating an NPC's loadout at runtime.
+//   - Querying loadout details (primary weapon, secondary, attachments).
+//
+// In a full CNPC + TACZ integration, the apply() method would call the
+// appropriate CNPC/TACZ scripting API to actually equip the NPC.
 
-'use strict';
+var LoadoutManager = (function() {
 
-/** @type {Map<string, object>} entityId → loadout object */
-const _loadouts = new Map();
+  var _loadouts = {}
 
-/**
- * Default loadout template.
- *
- * @returns {object}
- */
-function _defaultLoadout() {
+  function _defaultLoadout() {
+    return {
+      primary:     null,
+      secondary:   null,
+      melee:       null,
+      armour:      null,
+      attachments: [],
+      ammo:        {}
+    }
+  }
+
   return {
-    primary:    null,
-    secondary:  null,
-    melee:      null,
-    armour:     null,
-    attachments: [],
-    ammo:       {},
-  };
-}
 
-const LoadoutManager = {
+    // Set the full loadout for an NPC.
+    // loadout fields: primary, secondary, melee, armour, attachments[], ammo{}
+    set: function(entityId, loadout) {
+      var defaults = _defaultLoadout()
+      var merged = {}
+      for (var k in defaults) merged[k] = defaults[k]
+      for (var k in loadout)  merged[k] = loadout[k]
+      _loadouts[entityId] = merged
+    },
 
-  /**
-   * Set the full loadout for an NPC.
-   *
-   * @param {string} entityId
-   * @param {object} loadout
-   * @param {string} [loadout.primary]       - Primary weapon name (e.g. "M4A1")
-   * @param {string} [loadout.secondary]     - Sidearm name (e.g. "Glock 17")
-   * @param {string} [loadout.melee]         - Melee weapon (e.g. "Combat Knife")
-   * @param {string} [loadout.armour]        - Armour piece (e.g. "Kevlar Vest")
-   * @param {string[]} [loadout.attachments] - Weapon attachments (e.g. ["Red Dot", "Suppressor"])
-   * @param {object} [loadout.ammo]          - Ammo counts { weaponName: count }
-   */
-  set(entityId, loadout) {
-    _loadouts.set(entityId, { ..._defaultLoadout(), ...loadout });
-  },
+    // Get the loadout for an NPC.
+    // Returns a default empty loadout if none has been assigned.
+    get: function(entityId) {
+      return _loadouts[entityId] || _defaultLoadout()
+    },
 
-  /**
-   * Get the loadout for an NPC.
-   * Returns a default empty loadout if none has been assigned.
-   *
-   * @param {string} entityId
-   * @returns {object}
-   */
-  get(entityId) {
-    return _loadouts.get(entityId) || _defaultLoadout();
-  },
+    // Update individual fields of an NPC's loadout without replacing the whole object.
+    update: function(entityId, patch) {
+      var existing = LoadoutManager.get(entityId)
+      for (var k in patch) existing[k] = patch[k]
+      _loadouts[entityId] = existing
+    },
 
-  /**
-   * Update individual fields of an NPC's loadout without replacing the whole object.
-   *
-   * @param {string} entityId
-   * @param {object} patch - Partial loadout fields to update
-   */
-  update(entityId, patch) {
-    const existing = LoadoutManager.get(entityId);
-    _loadouts.set(entityId, { ...existing, ...patch });
-  },
+    // Remove the loadout entry for an NPC.
+    remove: function(entityId) {
+      delete _loadouts[entityId]
+    },
 
-  /**
-   * Remove the loadout entry for an NPC.
-   *
-   * @param {string} entityId
-   */
-  remove(entityId) {
-    _loadouts.delete(entityId);
-  },
+    // Format the loadout as a human-readable string for AI context embedding.
+    formatForContext: function(entityId) {
+      var l = LoadoutManager.get(entityId)
+      var parts = []
+      if (l.primary)   parts.push("Primary: " + l.primary)
+      if (l.secondary) parts.push("Secondary: " + l.secondary)
+      if (l.melee)     parts.push("Melee: " + l.melee)
+      if (l.armour)    parts.push("Armour: " + l.armour)
+      if (l.attachments && l.attachments.length > 0) {
+        parts.push("Attachments: " + l.attachments.join(", "))
+      }
+      var ammoKeys = Object.keys(l.ammo || {})
+      if (ammoKeys.length > 0) {
+        var ammoStr = []
+        for (var i = 0; i < ammoKeys.length; i++) {
+          ammoStr.push(ammoKeys[i] + ": " + l.ammo[ammoKeys[i]])
+        }
+        parts.push("Ammo: " + ammoStr.join(", "))
+      }
+      return parts.length > 0 ? parts.join(" | ") : "No loadout assigned"
+    },
 
-  /**
-   * Format the loadout as a human-readable string for AI context embedding.
-   *
-   * @param {string} entityId
-   * @returns {string}
-   */
-  formatForContext(entityId) {
-    const l = LoadoutManager.get(entityId);
-    const parts = [];
-
-    if (l.primary)   parts.push(`Primary: ${l.primary}`);
-    if (l.secondary) parts.push(`Secondary: ${l.secondary}`);
-    if (l.melee)     parts.push(`Melee: ${l.melee}`);
-    if (l.armour)    parts.push(`Armour: ${l.armour}`);
-
-    if (l.attachments && l.attachments.length > 0) {
-      parts.push(`Attachments: ${l.attachments.join(', ')}`);
+    // Return the loadout as a simple equipment string array.
+    // Compatible with the context.npc.equipment field expected by model_brain.js.
+    toEquipmentArray: function(entityId) {
+      var l = LoadoutManager.get(entityId)
+      var items = []
+      if (l.primary)   items.push(l.primary)
+      if (l.secondary) items.push(l.secondary)
+      if (l.melee)     items.push(l.melee)
+      if (l.armour)    items.push(l.armour)
+      return items
     }
 
-    const ammoKeys = Object.keys(l.ammo || {});
-    if (ammoKeys.length > 0) {
-      const ammoStr = ammoKeys.map(k => `${k}: ${l.ammo[k]}`).join(', ');
-      parts.push(`Ammo: ${ammoStr}`);
-    }
+  }
 
-    return parts.length > 0 ? parts.join(' | ') : 'No loadout assigned';
-  },
+})()
 
-  /**
-   * Return the loadout as a simple equipment string array.
-   * Compatible with the `context.npc.equipment` field expected by model_brain.js.
-   *
-   * @param {string} entityId
-   * @returns {string[]}
-   */
-  toEquipmentArray(entityId) {
-    const l = LoadoutManager.get(entityId);
-    const items = [];
-    if (l.primary)   items.push(l.primary);
-    if (l.secondary) items.push(l.secondary);
-    if (l.melee)     items.push(l.melee);
-    if (l.armour)    items.push(l.armour);
-    return items;
-  },
-};
-
-module.exports = LoadoutManager;

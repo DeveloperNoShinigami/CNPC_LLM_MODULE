@@ -6,10 +6,16 @@
 
   "brain_providers": {
     "gemini": {
-      "api_key_env": "GEMINI_API_KEY",
+      "api_key": "YOUR_GEMINI_API_KEY",
       "model": "gemini-1.5-flash",
       "temperature": 0.85,
       "max_output_tokens": 512
+    },
+    "openrouter": {
+      "api_key": "YOUR_OPENROUTER_API_KEY",
+      "model": "openai/gpt-4o-mini",
+      "temperature": 0.85,
+      "max_tokens": 512
     },
     "llama": {
       "endpoint": "http://localhost:11434/api/generate",
@@ -22,18 +28,15 @@
   "modules": {
     "tacz": {
       "enabled": true,
-      "config_path": "./modules/tacz/tacz_config.json",
-      "connector_path": "./modules/tacz/tacz_connector.js"
+      "config_path": "./modules/tacz/tacz_config.json"
     },
     "epic_fight": {
       "enabled": false,
-      "config_path": "./modules/epic_fight/epic_fight_config.json",
-      "connector_path": "./modules/epic_fight/epic_fight_connector.js"
+      "config_path": "./modules/epic_fight/epic_fight_config.json"
     },
     "irons_spells": {
       "enabled": false,
-      "config_path": "./modules/irons_spells/irons_config.json",
-      "connector_path": "./modules/irons_spells/irons_connector.js"
+      "config_path": "./modules/irons_spells/irons_config.json"
     }
   },
 
