@@ -11,19 +11,21 @@ NPCs powered by this system have full awareness of their surroundings — time, 
 1. [Overview](#overview)
 2. [Architecture](#architecture)
 3. [Directory Structure](#directory-structure)
-4. [Setup & Configuration](#setup--configuration)
-5. [Supported AI Providers](#supported-ai-providers)
-6. [Two-State NPC Conversation](#two-state-npc-conversation)
-7. [Module Integration Guide](#module-integration-guide)
-   - [TACZ Module](#tacz-module)
+4. [Quick Start: One Script Per NPC](#quick-start-one-script-per-npc)
+5. [Setup & Configuration](#setup--configuration)
+6. [Supported AI Providers](#supported-ai-providers)
+7. [Two-State NPC Conversation](#two-state-npc-conversation)
+8. [Module Integration Guide](#module-integration-guide)
+   - [TACZ Module — Roles](#tacz-module--roles)
    - [Epic Fight Module (Shell)](#epic-fight-module-shell)
    - [Iron's Spells Module (Shell)](#irons-spells-module-shell)
-8. [Script Load Order](#script-load-order)
-9. [Pluggable Architecture: Adding Your Own Module](#pluggable-architecture-adding-your-own-module)
-10. [Adding a New AI Provider](#adding-a-new-ai-provider)
-11. [API Reference](#api-reference)
-12. [CNPC ES5 Scripting Standard](#cnpc-es5-scripting-standard)
-13. [FAQ](#faq)
+9. [The Master Loader (core/loader.js)](#the-master-loader-coreloaderjs)
+10. [Creating a New Role](#creating-a-new-role)
+11. [Pluggable Architecture: Adding Your Own Module](#pluggable-architecture-adding-your-own-module)
+12. [Adding a New AI Provider](#adding-a-new-ai-provider)
+13. [API Reference](#api-reference)
+14. [CNPC ES5 Scripting Standard](#cnpc-es5-scripting-standard)
+15. [FAQ](#faq)
 
 ---
 
@@ -33,10 +35,12 @@ NPCs powered by this system have full awareness of their surroundings — time, 
 
 **Key features:**
 
+- **One script per NPC** — assign a single role script (e.g. `roles/squad_leader.js`) to an NPC in CNPC and everything is loaded automatically via `load()`.
+- **Role-based NPC identity** — roles live in `modules/<mod>/roles/` and define persona, goals, and preferred AI provider independently.
 - **Module-agnostic core** — the same AI plumbing works for any mod integration (TACZ, Epic Fight, Iron's Spells, or your own).
-- **Pluggable provider system** — swap between Gemini, OpenRouter (GPT-4o, Claude, Mistral, Llama …) by changing one config value.
+- **Pluggable provider system** — swap between Gemini, OpenRouter (GPT-4o, Claude, Mistral, Llama …) by changing one value in the role config.
 - **Full game-state awareness** — every prompt includes time, weather, biome, NPC health & loadout, player state, and nearby entities.
-- **Two-state conversation** — NPCs move from a brief military-style ACK to a full multi-turn dialogue, then back to idle on dismissal.
+- **Two-state conversation** — NPCs move from a brief ACK to a full multi-turn dialogue, then back to idle on dismissal.
 - **CNPC ES5 scripting standard** — all code runs in CNPC's Rhino JavaScript engine with Java interop for HTTP and file I/O.
 
 ---
@@ -44,35 +48,41 @@ NPCs powered by this system have full awareness of their surroundings — time, 
 ## Architecture
 
 ```
-Player right-clicks NPC
+NPC assigned role script: modules/tacz/roles/squad_leader.js
+        │
+        │  load(LLM_BASE_PATH + "/core/loader.js")   ← single load() call
+        ▼
+[loader.js] — chains ALL files in correct order via load(), then calls:
+              AIManager.init()  +  TACZConnector.init()
+        │
+        ▼  (CNPC fires interact() event)
+[Role Script: squad_leader.js]
+  • Reads NPC entity, player, world state from CNPC API
+  • Calls TACZConnector.handleRoleInteraction(SQUAD_LEADER_ROLE, entityId, context, msg, cb)
         │
         ▼
-[Connector] (e.g. TACZConnector)
-  • Reads NPC entity ID, player message, raw game data
-  • Resolves role & AI provider from module config
-  • Builds game-state context (ContextBuilder)
-  • Enriches with loadout (LoadoutManager)
+[TACZConnector.handleRoleInteraction()]
+  • Attaches goals (GoalsLoader) + roleId to context
+  • Calls AIManager.interact(moduleId, entityId, providerName, context, msg, cb)
         │
         ▼
-[AIManager.interact()]
+[AIManager]
   • Checks TalkManager for IDLE / LISTENING state
-  • Selects the correct model brain from ModelBrainRegistry
-  • Calls BrainFactory.create() → brain instance
+  • Selects model brain from ModelBrainRegistry (keyed by "tacz:gemini" etc.)
+  • Calls BrainFactory → brain instance
         │
         ▼
 [model_brain.buildSystemPrompt(context, mode)]
-  • Builds full persona + world-state system prompt
+  • Picks role persona (squad_leader / soldier / rifleman …)
+  • Builds full system prompt including goals block
         │
         ▼
 [GeminiBrain / OpenRouterBrain]  (via java.lang.Thread)
   • HTTP POST to AI API
-  • Returns response text via callback
+  • callback(null, responseText)
         │
         ▼
-[TalkManager] — stores turn history, manages IDLE/LISTENING
-        │
-        ▼
-Response text delivered back to caller
+Role script: event.npc.say(response)
 ```
 
 ---
@@ -82,7 +92,8 @@ Response text delivered back to caller
 ```
 CNPC_LLM_MODULE/
 ├── core/
-│   ├── ai_manager.js              MASTER AI MANAGER — global entry point
+│   ├── loader.js                  ★ MASTER LOADER — load this first via load()
+│   ├── ai_manager.js              Master AI router + ModelBrainRegistry
 │   ├── brain_factory.js           Instantiates AI provider brains
 │   ├── brain_registry.js          Maps entity IDs to brain instances
 │   ├── gemini_brain.js            Google Gemini API wrapper
@@ -90,45 +101,82 @@ CNPC_LLM_MODULE/
 │   ├── master_config.json         GLOBAL CONFIG — providers, modules, talk settings
 │   │
 │   ├── tacz_models/
-│   │   ├── gemini/model_brain.js     Gemini prompt logic for TACZ NPCs
-│   │   └── openrouter/model_brain.js OpenRouter prompt logic for TACZ NPCs
+│   │   ├── gemini/model_brain.js     Role-aware Gemini prompts for TACZ
+│   │   └── openrouter/model_brain.js Role-aware OpenRouter prompts for TACZ
 │   │
 │   ├── ef_models/
-│   │   └── gemini/model_brain.js     Gemini prompt logic for Epic Fight NPCs
+│   │   └── gemini/model_brain.js     Gemini prompts for Epic Fight NPCs
 │   │
 │   └── irons_models/
-│       └── gemini/model_brain.js     Gemini prompt logic for Iron's Spells NPCs
+│       └── gemini/model_brain.js     Gemini prompts for Iron's Spells NPCs
 │
 ├── modules/
 │   ├── tacz/
-│   │   ├── tacz_connector.js         TACZ ↔ Core bridge
-│   │   ├── tacz_config.json          Role definitions & NPC assignments
+│   │   ├── roles/                 ★ ONE SCRIPT PER NPC ROLE
+│   │   │   ├── squad_leader.js    → assign to Squad Leader NPCs in CNPC
+│   │   │   └── soldier.js         → assign to Soldier NPCs in CNPC
+│   │   ├── tacz_connector.js      TACZ ↔ Core bridge
+│   │   ├── tacz_config.json       Role definitions (managed here)
 │   │   └── utils/
-│   │       ├── context_builder.js    Normalises raw game data → context object
-│   │       ├── goals_loader.js       Loads NPC goal sets from config
-│   │       └── loadout_manager.js    Manages per-NPC weapon/armour loadouts
+│   │       ├── context_builder.js Normalises raw game data → context object
+│   │       ├── goals_loader.js    Loads NPC goal sets from config
+│   │       └── loadout_manager.js Manages per-NPC weapon/armour loadouts
 │   │
 │   ├── epic_fight/
-│   │   ├── epic_fight_connector.js   Epic Fight ↔ Core bridge (shell)
+│   │   ├── epic_fight_connector.js  (shell)
 │   │   └── epic_fight_config.json
 │   │
 │   └── irons_spells/
-│       ├── irons_connector.js        Iron's Spells ↔ Core bridge (shell)
+│       ├── irons_connector.js       (shell)
 │       └── irons_config.json
 │
 ├── npc_talk/
-│   ├── talk_manager.js              IDLE ↔ LISTENING state machine
-│   ├── session_store.js             In-memory conversation history
-│   └── interaction_logic.js        Order / closing-phrase detection
+│   ├── talk_manager.js            IDLE ↔ LISTENING state machine
+│   ├── session_store.js           In-memory conversation history
+│   └── interaction_logic.js       Order / closing-phrase detection
 │
 └── README.md
 ```
 
 ---
 
+## Quick Start: One Script Per NPC
+
+The entire system is designed so you **only assign one file to each NPC** in CNPC.
+
+### Step 1 — Place the framework on your server
+
+Copy the `CNPC_LLM_MODULE` folder into your CNPC scripts directory.
+The default path is `scripts/LLM_MODULE/` relative to your server root.
+
+### Step 2 — Set your API key
+
+Open `core/master_config.json` and set `brain_providers.gemini.api_key`.
+
+### Step 3 — Assign a role script to your NPC
+
+In the CNPC NPC editor, set the NPC's script to:
+```
+scripts/LLM_MODULE/modules/tacz/roles/squad_leader.js
+```
+or
+```
+scripts/LLM_MODULE/modules/tacz/roles/soldier.js
+```
+
+That is all. When the NPC loads, the role script calls `load(LLM_BASE_PATH + "/core/loader.js")` which chains every required file and initialises the full system automatically.
+
+### Step 4 — Right-click the NPC in-game
+
+The NPC will acknowledge you (IDLE → LISTENING) and you can begin conversing.
+
+> **Note:** If you placed the framework in a different folder than `scripts/LLM_MODULE`, edit the `LLM_BASE_PATH` line near the top of each role script.
+
+---
+
 ## Setup & Configuration
 
-### 1. Edit `core/master_config.json`
+### Edit `core/master_config.json`
 
 ```json
 {
@@ -155,34 +203,16 @@ CNPC_LLM_MODULE/
 }
 ```
 
-Replace `YOUR_GEMINI_API_KEY` with your [Google AI Studio](https://aistudio.google.com/app/apikey) key.
-Replace `YOUR_OPENROUTER_API_KEY` with your [OpenRouter](https://openrouter.ai/keys) key.
-
-### 2. Assign NPCs in the module config
-
-Open `modules/tacz/tacz_config.json` and add your NPC entity IDs:
-
-```json
-"npc_assignments": {
-  "npc_entity_123": { "role": "rifleman", "name": "Alpha" },
-  "npc_entity_456": { "role": "sniper",   "name": "Ghost" }
-}
-```
-
-### 3. Load the scripts in CNPC
-
-See [Script Load Order](#script-load-order) below.
-
 ---
 
 ## Supported AI Providers
 
-| Provider key  | File                     | Description |
-|---------------|--------------------------|-------------|
-| `gemini`      | `core/gemini_brain.js`   | Google Gemini 1.5 Flash / Pro via REST API |
+| Provider key  | File                       | Description |
+|---------------|----------------------------|-------------|
+| `gemini`      | `core/gemini_brain.js`     | Google Gemini 1.5 Flash / Pro via REST API |
 | `openrouter`  | `core/openrouter_brain.js` | OpenRouter — access GPT-4o, Claude, Mistral, Llama 3, etc. |
 
-To switch a module to OpenRouter, set `"brain_provider": "openrouter"` in the role's config entry and ensure your key is in `master_config.json`.
+To use OpenRouter for a role, set `brainProvider: "openrouter"` inside the role script (e.g. in `SQUAD_LEADER_ROLE.brainProvider`) and ensure your key is in `master_config.json`.
 
 ---
 
@@ -192,9 +222,11 @@ To switch a module to OpenRouter, set `"brain_provider": "openrouter"` in the ro
 
 **Trigger:** Player right-clicks the NPC (empty `playerMsg`).
 
-**Response:** A single short acknowledgment line (max ~15 words) signalling the NPC is alert and listening.
+**Response:** A single short acknowledgment line (max ~15 words) in the NPC's role voice.
 
-**Example:** *"Eyes up. Alpha copies — what do you need?"*
+**Examples:**
+- *Squad Leader:* "All units report. What's your status, soldier?"
+- *Soldier:* "Eyes forward. Ready for orders."
 
 The NPC immediately transitions to **LISTENING**.
 
@@ -229,49 +261,37 @@ The NPC delivers a closing sign-off and returns to **IDLE**. Conversation histor
 
 ## Module Integration Guide
 
-### TACZ Module
+### TACZ Module — Roles
 
-The primary reference implementation.
+The TACZ module uses the `modules/tacz/roles/` folder for NPC assignment.
 
-**Files:**
-- `modules/tacz/tacz_connector.js` — event bridge
-- `modules/tacz/tacz_config.json` — roles and NPC assignments
-- `modules/tacz/utils/context_builder.js` — game-state normaliser
-- `modules/tacz/utils/loadout_manager.js` — per-NPC weapon tracking
-- `modules/tacz/utils/goals_loader.js` — goal-set loader
+**Available roles:**
 
-**Roles:**
+| Role script | roleId | Persona | Default goals |
+|---|---|---|---|
+| `roles/squad_leader.js` | `squad_leader` | Authoritative commander; leads the squad and coordinates tactics | patrol, engage, report, coordinate_squad |
+| `roles/soldier.js`      | `soldier`      | Disciplined trooper; executes orders and engages threats on sight | patrol, engage, follow_player_on_order, suppress |
 
-| Role      | Description |
-|-----------|-------------|
-| `rifleman` | Standard infantry; patrols and engages hostiles |
-| `sniper`   | Long-range specialist; holds position, priority targets |
-| `support`  | Heavy weapons; suppresses enemies, resupplies allies |
+**Assigning a role:** In CNPC's NPC editor, set the NPC's script path to the role file.  No config changes are needed.
 
-**Setting a loadout at runtime:**
+**Switching AI provider per NPC:** Open the role script and change `brainProvider`:
 ```javascript
+var SQUAD_LEADER_ROLE = {
+  roleId:        "squad_leader",
+  moduleId:      "tacz",
+  brainProvider: "openrouter"   // ← switch to OpenRouter for this NPC
+}
+```
+
+**Setting a loadout:**
+```javascript
+// In a separate NPC init script or the role script's init() hook:
 LoadoutManager.set("npc_entity_123", {
   primary:     "M4A1",
   secondary:   "Glock 17",
   melee:       "Combat Knife",
   armour:      "Kevlar Vest",
   attachments: ["Red Dot", "Suppressor"]
-})
-```
-
-**Triggering an interaction from an NPC script:**
-```javascript
-TACZConnector.onNPCInteract({
-  entityId:   npc.getUUID(),
-  npcName:    npc.getName(),
-  playerMsg:  event.message || "",
-  npcRawData: { health: npc.getHealth(), maxHealth: npc.getMaxHealth(), equipment: [] },
-  playerData: { name: player.getName(), health: player.getHealth() },
-  worldData:  { time: world.getTotalWorldTime(), biome: world.getBiomeName() },
-  nearbyData: { hostiles: [], friendlies: [] }
-}, function(err, response) {
-  if (err) { LLM_LOG("Error: " + err); return }
-  npc.say(response)
 })
 ```
 
@@ -282,10 +302,9 @@ TACZConnector.onNPCInteract({
 Located at `modules/epic_fight/`. Contains a working connector shell.
 
 **To fully implement:**
-1. Read Epic Fight combat data (weapon combo, stamina, etc.) from the CNPC/Epic Fight API.
-2. Populate `context.npc.equipment` with the NPC's weapons and fighting style.
+1. Add `modules/epic_fight/roles/warrior.js` following the pattern of `tacz/roles/soldier.js`.
+2. Read Epic Fight weapon data from the CNPC/Epic Fight API; populate `context.npc.equipment`.
 3. Set `"enabled": true` in `master_config.json`.
-4. Call `EpicFightConnector.init("<path>/modules/epic_fight/epic_fight_config.json")` at startup.
 
 ---
 
@@ -294,44 +313,99 @@ Located at `modules/epic_fight/`. Contains a working connector shell.
 Located at `modules/irons_spells/`. Contains a working connector shell.
 
 **To fully implement:**
-1. Read active spells and mana from the Iron's Spells NPC data.
-2. Populate `context.npc.equipment` with the list of active spell names.
+1. Add `modules/irons_spells/roles/arcanist.js` following the role-script pattern.
+2. Read active spells and mana from the Iron's Spells API; populate `context.npc.equipment`.
 3. Set `"enabled": true` in `master_config.json`.
-4. Call `IronsSpellsConnector.init("<path>/modules/irons_spells/irons_config.json")` at startup.
 
 ---
 
-## Script Load Order
+## The Master Loader (`core/loader.js`)
 
-All files must be loaded in order before any NPC events fire. Place these calls in your CNPC server startup script or NPC `init` event:
+`loader.js` is the single entry-point that chains every required file via Rhino's `load()` function and then calls `AIManager.init()` and `TACZConnector.init()`.
 
-```
-1.  core/gemini_brain.js
-2.  core/openrouter_brain.js          (optional — only if using OpenRouter)
-3.  core/brain_factory.js
-4.  core/brain_registry.js
-5.  core/ai_manager.js                (also defines ModelBrainRegistry)
-6.  core/tacz_models/gemini/model_brain.js
-7.  core/tacz_models/openrouter/model_brain.js  (optional)
-8.  core/ef_models/gemini/model_brain.js        (optional)
-9.  core/irons_models/gemini/model_brain.js     (optional)
-10. npc_talk/session_store.js
-11. npc_talk/talk_manager.js
-12. npc_talk/interaction_logic.js
-13. modules/tacz/utils/context_builder.js
-14. modules/tacz/utils/loadout_manager.js
-15. modules/tacz/utils/goals_loader.js
-16. modules/tacz/tacz_connector.js
-17. modules/epic_fight/epic_fight_connector.js  (optional)
-18. modules/irons_spells/irons_connector.js     (optional)
-```
+A guard variable (`LLM_SYSTEM_LOADED`) ensures the entire chain runs **only once** per server session, even when many NPCs each have a role script that calls `load(".../loader.js")`.
 
-Then call once:
+### Requirements
+
+Set `LLM_BASE_PATH` to the absolute (or server-root-relative) path of the framework folder **before** calling `load()`:
+
 ```javascript
-AIManager.init("<absolute_path>/core/master_config.json")
-TACZConnector.init("<absolute_path>/modules/tacz/tacz_config.json")
-// ... other enabled connectors
+// At the top of a role script or a global CNPC server script:
+var LLM_BASE_PATH = "scripts/LLM_MODULE"    // adjust to your server layout
+load(LLM_BASE_PATH + "/core/loader.js")
 ```
+
+### What loader.js loads (in order)
+
+```
+core/gemini_brain.js
+core/openrouter_brain.js
+core/brain_factory.js
+core/brain_registry.js
+core/ai_manager.js                        ← also defines ModelBrainRegistry inline
+core/tacz_models/gemini/model_brain.js    ← self-registers with ModelBrainRegistry
+core/tacz_models/openrouter/model_brain.js
+core/ef_models/gemini/model_brain.js
+core/irons_models/gemini/model_brain.js
+npc_talk/session_store.js
+npc_talk/talk_manager.js
+npc_talk/interaction_logic.js
+modules/tacz/utils/context_builder.js
+modules/tacz/utils/loadout_manager.js
+modules/tacz/utils/goals_loader.js
+modules/tacz/tacz_connector.js
+```
+
+Then it calls:
+```javascript
+AIManager.init(LLM_BASE_PATH + "/core/master_config.json")
+TACZConnector.init(LLM_BASE_PATH + "/modules/tacz/tacz_config.json")
+```
+
+---
+
+## Creating a New Role
+
+To add a new TACZ role (e.g. `medic`):
+
+### 1 — Add the role to `modules/tacz/tacz_config.json`
+
+```json
+"medic": {
+  "description": "Combat medic. Prioritises healing allies and evacuating casualties.",
+  "brain_provider": "gemini",
+  "goals": ["resupply_allies", "hold_position", "report_contacts"]
+}
+```
+
+### 2 — Create `modules/tacz/roles/medic.js`
+
+Copy `soldier.js` as a template and change:
+```javascript
+var MEDIC_ROLE = {
+  roleId:        "medic",
+  moduleId:      "tacz",
+  brainProvider: "gemini",
+  defaultTask:   "treating casualties"
+}
+```
+Update the `init`, `interact`, and `removed` function names/log messages.
+
+### 3 — Add a persona in the model brains
+
+In both `core/tacz_models/gemini/model_brain.js` and `core/tacz_models/openrouter/model_brain.js`, add an entry to `_ROLE_PERSONAS`:
+
+```javascript
+"medic": {
+  title:       "Combat Medic",
+  tone:        "calm and focused under fire — you prioritise keeping your squad alive above all else",
+  defaultTask: "treating casualties"
+}
+```
+
+### 4 — Assign the script in CNPC
+
+Set the NPC's script to `scripts/LLM_MODULE/modules/tacz/roles/medic.js`.
 
 ---
 
@@ -347,7 +421,7 @@ TACZConnector.init("<absolute_path>/modules/tacz/tacz_config.json")
    ```
    core/my_mod_models/gemini/model_brain.js
    ```
-   At the bottom of your model brain file, self-register:
+   Self-register at the bottom:
    ```javascript
    ModelBrainRegistry.register("my_mod", "gemini", {
      brainProvider: "gemini",
@@ -355,20 +429,26 @@ TACZConnector.init("<absolute_path>/modules/tacz/tacz_config.json")
    })
    ```
 
-3. **Add to `master_config.json`:**
+3. **Create role scripts:**
+   ```
+   modules/my_mod/roles/my_role.js
+   ```
+   Follow the pattern in `modules/tacz/roles/soldier.js`:
+   - Set `LLM_BASE_PATH` + call `load(LLM_BASE_PATH + "/core/loader.js")`
+   - Define `MY_ROLE` config object
+   - Implement CNPC event hooks (`init`, `interact`, `removed`)
+   - Call `MyModConnector.handleRoleInteraction(MY_ROLE, entityId, context, msg, cb)`
+
+4. **Add your files to `core/loader.js`:**
+   Add `load()` calls for your model brain and connector, and call `MyModConnector.init(...)`.
+
+5. **Add to `core/master_config.json`:**
    ```json
    "my_mod": {
      "enabled": true,
      "config_path": "./modules/my_mod/my_mod_config.json"
    }
    ```
-
-4. **Load your files** in the correct order (see above) and call:
-   ```javascript
-   AIManager.registerModule("my_mod", MyModConnector)
-   ```
-
-That is all. The AI Manager will automatically route `my_mod` NPC events to your connector and brain.
 
 ---
 
@@ -477,19 +557,32 @@ All scripts in this framework follow the **CNPC ES5 scripting standard** require
 **Q: Where do I put my API key?**
 In `core/master_config.json` under `brain_providers.gemini.api_key` (or `openrouter.api_key`). Never commit keys to version control.
 
-**Q: How do I add a new NPC?**
-In the relevant module config (e.g. `tacz_config.json`), add an entry to `npc_assignments` mapping the NPC's entity ID to a role.
+**Q: How do I assign a role to an NPC?**
+In CNPC's NPC editor, set the NPC's **script** to the role file (e.g. `scripts/LLM_MODULE/modules/tacz/roles/squad_leader.js`). That script loads the entire system automatically. No config file edits are needed.
+
+**Q: How do I give a specific NPC a different AI provider?**
+Open the role script (e.g. `soldier.js`) and change `brainProvider` in the role config object at the top of the file:
+```javascript
+var SOLDIER_ROLE = {
+  roleId:        "soldier",
+  moduleId:      "tacz",
+  brainProvider: "openrouter"   // ← changed from "gemini"
+}
+```
+If you want different NPCs of the same role to use different providers, duplicate the role script (e.g. `soldier_openrouter.js`) and change the `brainProvider` there.
 
 **Q: How do I change what an NPC says?**
-Edit the `buildSystemPrompt` function in `core/[modname]_models/[provider]/model_brain.js`. Adjust the `basePersona` block to change personality, or the `_getModeInstructions` block to change response style.
+Edit the persona and mode-instructions in `core/[modname]_models/[provider]/model_brain.js`. The `_ROLE_PERSONAS` table controls each role's tone and title. The `_getModeInstructions()` function controls ACK / LISTENING / CLOSING response style.
+
+**Q: LLM_BASE_PATH — what should it be?**
+It should be the path from your Minecraft server's working directory to the root of `CNPC_LLM_MODULE`. If you placed it in `<server>/scripts/LLM_MODULE/`, use `"scripts/LLM_MODULE"`. If you used an absolute path, use the full path.
 
 **Q: Can I use a locally-hosted model?**
-Yes. Create a new brain wrapper that posts to your local endpoint (e.g. Ollama at `http://localhost:11434`). Register it with `BrainFactory.register("ollama", OllamaBrain)` and add it to `master_config.json`.
+Yes. Create a new brain wrapper that posts to your local endpoint (e.g. Ollama at `http://localhost:11434`). Register it with `BrainFactory.register("ollama", OllamaBrain)` and add it to `master_config.json`. Then set `brainProvider: "ollama"` in any role script.
 
 **Q: The NPC doesn't respond — what do I check?**
-1. Confirm `AIManager.init()` has been called with the correct config path.
-2. Confirm the module connector `init()` was called.
-3. Confirm the correct `model_brain.js` file was loaded and self-registered.
-4. Check `LLM_LOG` output for error messages.
-5. Verify your API key is valid and the network is reachable from the server.
+1. Check `LLM_LOG` output for any error from `loader.js` or the brain HTTP call.
+2. Confirm `LLM_BASE_PATH` is correct in the role script.
+3. Verify your API key is set in `master_config.json`.
+4. Ensure the network is reachable from the server (Gemini / OpenRouter are external APIs).
  

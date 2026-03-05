@@ -4,12 +4,14 @@
 //
 // Gemini brain logic for TACZ-module NPCs.
 //
-// Defines HOW the Gemini AI provider is prompted when driving a TACZ NPC.
-// Builds the system prompt sent to the Gemini API, incorporating full
-// game-state awareness (time, weather, biome, health, nearby entities, etc.).
+// Builds the system prompt sent to the Gemini API, incorporating:
+//   • Role-specific persona (squad_leader, soldier, rifleman, etc.)
+//   • Full game-state awareness (time, weather, biome, health, entities)
+//   • NPC loadout from context.npc.equipment
+//   • Active goals from context.goals
 //
-// The NPC's in-game weapon / loadout is conveyed via context.npc.equipment.
-// The folder name (gemini/) identifies the AI provider only.
+// context.roleId is set by the role script (or connector) and selects the
+// correct persona block.  If roleId is unrecognised, falls back to "rifleman".
 //
 // This file self-registers with ModelBrainRegistry on load.
 // Load order: load this file AFTER ai_manager.js (which defines ModelBrainRegistry).
@@ -17,6 +19,39 @@
 var _TACZ_GEMINI_BRAIN = (function() {
 
   var brainProvider = "gemini"
+
+  // ── Role persona definitions ────────────────────────────────────────────────
+  // Each entry describes how that role presents itself in conversation.
+
+  var _ROLE_PERSONAS = {
+    "squad_leader": {
+      title:       "Squad Leader",
+      tone:        "authoritative, tactical, and commanding — you lead your unit, issue crisp orders, and keep the squad focused on the objective",
+      defaultTask: "commanding the squad"
+    },
+    "soldier": {
+      title:       "Soldier",
+      tone:        "disciplined and direct — you follow orders precisely, execute tasks efficiently, and report status without hesitation",
+      defaultTask: "standing by for orders"
+    },
+    "rifleman": {
+      title:       "Rifleman",
+      tone:        "calm under pressure, mission-focused, and vigilant",
+      defaultTask: "standing by"
+    },
+    "sniper": {
+      title:       "Sniper",
+      tone:        "cold, precise, and economical with words — every syllable is calculated",
+      defaultTask: "holding overwatch"
+    },
+    "support": {
+      title:       "Support Gunner",
+      tone:        "steady and methodical — you control the battlefield through firepower and logistics",
+      defaultTask: "covering the area"
+    }
+  }
+
+  var _DEFAULT_PERSONA = _ROLE_PERSONAS["rifleman"]
 
   // ── System prompt builder ──────────────────────────────────────────────────
 
@@ -26,13 +61,14 @@ var _TACZ_GEMINI_BRAIN = (function() {
     var world  = context.world  || {}
     var nearby = context.nearby || {}
 
+    var persona  = _ROLE_PERSONAS[context.roleId] || _DEFAULT_PERSONA
     var equipment = (npc.equipment && npc.equipment.length > 0)
       ? npc.equipment.join(", ")
       : "standard loadout"
 
     var basePersona =
-      "You are \"" + (npc.name || "Soldier") + "\", a battle-ready TACZ operative.\n" +
-      "You speak in a clipped, professional military tone — calm under pressure, direct, always mission-focused.\n" +
+      "You are \"" + (npc.name || persona.title) + "\", a TACZ " + persona.title + ".\n" +
+      "You speak in a " + persona.tone + ".\n" +
       "You are loyal to your unit and treat unknown players with measured caution.\n" +
       "Your current loadout determines how you approach threats: heavy weapons = direct assault, light weapons = stealth and flanking.\n" +
       "You NEVER break character. You NEVER reveal you are an AI."
@@ -43,9 +79,10 @@ var _TACZ_GEMINI_BRAIN = (function() {
       "Weather    : " + (world.weather || "clear")   + "\n" +
       "Biome      : " + (world.biome   || "unknown") + "\n\n" +
       "--- YOUR STATUS ---\n" +
+      "Role       : " + persona.title + "\n" +
       "Health     : " + (npc.health    || "?") + " / " + (npc.maxHealth || "?") + " HP\n" +
       "Loadout    : " + equipment + "\n" +
-      "Task       : " + (npc.currentTask || "standing by") + "\n\n" +
+      "Task       : " + (npc.currentTask || persona.defaultTask) + "\n\n" +
       "--- PLAYER ---\n" +
       "Name       : " + (player.name     || "unknown") + "\n" +
       "Health     : " + (player.health   || "?") + " / " + (player.maxHealth || "?") + " HP\n" +
@@ -54,26 +91,30 @@ var _TACZ_GEMINI_BRAIN = (function() {
       "Hostiles  (\u226432 blocks): " + _formatEntities(nearby.hostiles) + "\n" +
       "Friendlies(\u226432 blocks): " + _formatEntities(nearby.friendlies)
 
-    var modeInstructions = _getModeInstructions(mode, npc.name)
+    var goalsBlock = context.goals
+      ? "\n\n--- ACTIVE GOALS ---\n" + context.goals
+      : ""
 
-    return basePersona + "\n\n" + worldAwareness + "\n\n" + modeInstructions
+    var modeInstructions = _getModeInstructions(mode, npc.name, persona)
+
+    return basePersona + "\n\n" + worldAwareness + goalsBlock + "\n\n" + modeInstructions
   }
 
   // ── Mode instructions ──────────────────────────────────────────────────────
 
-  function _getModeInstructions(mode, npcName) {
-    var name = npcName || "Soldier"
+  function _getModeInstructions(mode, npcName, persona) {
+    var name = npcName || persona.title
     if (mode === "ACK") {
       return (
         "A player has right-clicked you. " +
-        "Respond with ONE short, sharp military acknowledgment (max 15 words). " +
+        "Respond with ONE short acknowledgment in your role's voice (max 15 words). " +
         "Signal you are alert and listening."
       )
     }
     if (mode === "LISTENING") {
       return (
         "You are in an active conversation with the player. " +
-        "Stay in your military persona at all times. " +
+        "Stay in your role persona at all times. " +
         "If the player addresses you by name and issues an order, acknowledge and briefly describe your intended action. " +
         "Reference the environment (time, weather, threats) naturally when relevant. " +
         "Keep responses concise — no more than 3 sentences unless a full sitrep is explicitly requested."
@@ -82,11 +123,11 @@ var _TACZ_GEMINI_BRAIN = (function() {
     if (mode === "CLOSING") {
       return (
         "The player is ending the conversation. " +
-        "Deliver a crisp military sign-off (e.g. \"Copy that. " + name + " out.\", \"Roger. Standing by.\"). " +
+        "Deliver a crisp sign-off in your role's voice (e.g. \"Copy that. " + name + " out.\"). " +
         "Maximum 2 sentences."
       )
     }
-    return "Respond naturally within your military persona."
+    return "Respond naturally within your role persona."
   }
 
   // ── Entity formatter ───────────────────────────────────────────────────────

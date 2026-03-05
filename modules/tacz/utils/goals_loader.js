@@ -26,7 +26,8 @@ var GoalsLoader = (function() {
     "report_contacts":         "Verbally report when new entities are detected nearby.",
     "suppress_hostiles":       "Lay down suppressive fire to pin down enemies.",
     "resupply_allies":         "Distribute ammunition and supplies to nearby friendly NPCs.",
-    "secure_area":             "Clear and hold the immediate area of all hostile entities."
+    "secure_area":             "Clear and hold the immediate area of all hostile entities.",
+    "coordinate_squad":        "Issue tactical orders to nearby friendly NPCs and keep the unit cohesive."
   }
 
   var _config = null

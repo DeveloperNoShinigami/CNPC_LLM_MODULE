@@ -1,10 +1,20 @@
 {
   "module": "tacz",
-  "description": "Timeless and Classics Zero (TACZ) — Brain mapping and role definitions.",
+  "description": "Timeless and Classics Zero (TACZ) — Brain mapping and role definitions. Roles are managed here; NPC assignment is done by attaching the matching role script (modules/tacz/roles/<roleId>.js) directly to the NPC in CNPC.",
 
   "default_brain_provider": "gemini",
 
   "roles": {
+    "squad_leader": {
+      "description": "Commanding officer. Coordinates the squad, issues orders, and maintains tactical awareness.",
+      "brain_provider": "gemini",
+      "goals": ["patrol", "engage_hostiles", "report_contacts", "follow_player_on_order", "coordinate_squad"]
+    },
+    "soldier": {
+      "description": "Standard infantry. Executes orders from the squad leader and engages threats on sight.",
+      "brain_provider": "gemini",
+      "goals": ["patrol", "engage_hostiles", "follow_player_on_order", "suppress_hostiles"]
+    },
     "rifleman": {
       "description": "Standard infantry soldier. Engages targets at medium range.",
       "brain_provider": "gemini",
@@ -22,11 +32,6 @@
     }
   },
 
-  "npc_assignments": {
-    "_comment": "Maps NPC entity IDs to roles. Edit this section to assign roles to specific NPCs.",
-    "_example": {
-      "npc_entity_123": { "role": "rifleman", "name": "Alpha" },
-      "npc_entity_456": { "role": "sniper",   "name": "Ghost" }
-    }
-  }
+  "_npc_assignments_note": "NPC-to-role assignment is no longer done here. Assign the role script directly to the NPC in CNPC: modules/tacz/roles/<roleId>.js. The role script loads the full system and handles all events automatically."
 }
+

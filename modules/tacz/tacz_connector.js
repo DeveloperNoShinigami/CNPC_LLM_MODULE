@@ -4,20 +4,22 @@
 //
 // Bridge between TACZ NPCs and the Core AI Manager.
 //
-// This connector:
-//   1. Loads tacz_config.json via Java file I/O and inits GoalsLoader.
-//   2. Resolves the NPC's role and AI provider from tacz_config.
-//   3. Builds a rich game-state context via ContextBuilder.
-//   4. Enriches context with loadout data from LoadoutManager.
-//   5. Forwards the interaction to AIManager.interact() with the correct
-//      providerName so the master manager routes to
-//      core/tacz_models/[providerName]/model_brain.js.
-//   6. Returns the AI-generated response via callback.
+// ── TWO ENTRY POINTS ─────────────────────────────────────────────────────────
 //
-// CONNECTOR CONTRACT — every connector must implement:
-//   init(configPath)                          — Load config; call once at startup.
-//   onNPCInteract(event, callback)            — Main entry point for NPC events.
-//   onNPCRemoved(entityId)                    — Cleanup when NPC leaves the world.
+//   handleRoleInteraction(roleConfig, entityId, context, playerMsg, callback)
+//     → Used by role scripts in modules/tacz/roles/.  The role script has
+//       already built the context from CNPC API data; the connector just
+//       attaches goals and forwards to AIManager.
+//
+//   onNPCInteract(event, callback)
+//     → Legacy / fallback path.  Resolves role from the config file when no
+//       dedicated role script is attached to the NPC.
+//
+// ── CONNECTOR CONTRACT ───────────────────────────────────────────────────────
+//   init(configPath)                                  — Load config; call once.
+//   handleRoleInteraction(role, id, ctx, msg, cb)     — Role-script entry point.
+//   onNPCInteract(event, callback)                    — Legacy entry point.
+//   onNPCRemoved(entityId)                            — Cleanup on despawn/death.
 //
 // Depends on (must be loaded before this file):
 //   ContextBuilder, LoadoutManager, GoalsLoader, AIManager
@@ -43,20 +45,10 @@ var TACZConnector = (function() {
     return JSON.parse(sb.toString())
   }
 
-  // ── Role resolver ──────────────────────────────────────────────────────────
+  // ── Legacy role resolver (for onNPCInteract fallback path) ────────────────
 
   function _resolveAssignment(entityId) {
-    var assignments = _config.npc_assignments || {}
-    if (assignments[entityId]) {
-      var a = assignments[entityId]
-      var role = a.role || "rifleman"
-      var roleConfig = (_config.roles && _config.roles[role]) ? _config.roles[role] : {}
-      return {
-        role:           role,
-        brain_provider: roleConfig.brain_provider || _config.default_brain_provider || "gemini"
-      }
-    }
-    var defaultRole = "rifleman"
+    var defaultRole       = "rifleman"
     var defaultRoleConfig = (_config.roles && _config.roles[defaultRole]) ? _config.roles[defaultRole] : {}
     return {
       role:           defaultRole,
@@ -70,25 +62,39 @@ var TACZConnector = (function() {
 
     // Initialise the connector.
     // configPath: absolute path to modules/tacz/tacz_config.json
-    // Call once at server / script startup.
+    // Called automatically by loader.js.
     init: function(configPath) {
       _config = _loadConfig(configPath)
       GoalsLoader.init(_config)
       LLM_LOG("TACZConnector: initialised.")
     },
 
-    // Handle an NPC interaction event (right-click or chat message directed at NPC).
+    // ── ROLE-SCRIPT ENTRY POINT ─────────────────────────────────────────────
+    // Called by role scripts in modules/tacz/roles/ after they have built the
+    // game-state context from CNPC API data.
+    //
+    // roleConfig : object  — { roleId, moduleId, brainProvider }
+    // entityId   : string  — NPC entity UUID
+    // context    : object  — game-state context from ContextBuilder.build()
+    // playerMsg  : string  — player's message ("" on right-click / first contact)
+    // callback   : function(errorMsg, responseText)
+    handleRoleInteraction: function(roleConfig, entityId, context, playerMsg, callback) {
+      var roleId       = roleConfig.roleId        || "soldier"
+      var providerName = roleConfig.brainProvider || (_config ? _config.default_brain_provider : "gemini") || "gemini"
+
+      // Attach goals to context so the model_brain can embed them in the prompt
+      context.goals  = GoalsLoader.formatForPrompt(roleId)
+      context.roleId = roleId
+
+      AIManager.interact("tacz", entityId, providerName, context, playerMsg, callback)
+    },
+
+    // ── LEGACY / FALLBACK ENTRY POINT ───────────────────────────────────────
+    // Used when no dedicated role script is assigned to the NPC.
+    // Resolves the role as "rifleman" by default.
     //
     // event fields:
-    //   entityId   : string  — Unique NPC entity ID
-    //   npcName    : string  — Display name of the NPC
-    //   playerMsg  : string  — Player's message ("" on right-click / first contact)
-    //   npcRawData : object  — Raw NPC data from CNPC API
-    //   playerData : object  — Raw player data
-    //   worldData  : object  — Raw world/environment data
-    //   nearbyData : object  — Raw nearby-entity data
-    //
-    // callback: function(errorMsg, responseText)
+    //   entityId, npcName, playerMsg, npcRawData, playerData, worldData, nearbyData
     onNPCInteract: function(event, callback) {
       var entityId   = event.entityId   || ""
       var npcName    = event.npcName    || "Soldier"
@@ -98,11 +104,9 @@ var TACZConnector = (function() {
       var worldData   = event.worldData   || {}
       var nearbyData  = event.nearbyData  || {}
 
-      // 1. Resolve role and provider
-      var assignment    = _resolveAssignment(entityId)
-      var providerName  = assignment.brain_provider
+      var assignment   = _resolveAssignment(entityId)
+      var providerName = assignment.brain_provider
 
-      // 2. Enrich NPC data with loadout
       var loadoutEquip = LoadoutManager.toEquipmentArray(entityId)
       var enrichedNPC  = {
         name:        npcRawData.name        || npcName,
@@ -112,7 +116,6 @@ var TACZConnector = (function() {
         currentTask: npcRawData.currentTask || "standing by"
       }
 
-      // 3. Build game-state context
       var context = ContextBuilder.build({
         npcData:    enrichedNPC,
         playerData: playerData,
@@ -120,10 +123,9 @@ var TACZConnector = (function() {
         nearbyData: nearbyData
       })
 
-      // Attach role goals for optional use by model_brain
-      context.goals = GoalsLoader.formatForPrompt(assignment.role)
+      context.goals  = GoalsLoader.formatForPrompt(assignment.role)
+      context.roleId = assignment.role
 
-      // 4. Forward to AIManager
       AIManager.interact("tacz", entityId, providerName, context, playerMsg, callback)
     },
 
