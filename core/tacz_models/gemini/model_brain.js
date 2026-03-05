@@ -114,12 +114,34 @@ var _TACZ_GEMINI_BRAIN = (function() {
       ? "\n\n--- SQUAD / COMMAND CHAIN ---\n" +
         "Command authority : follow orders from the player (master) first, then from your Squad Leader.\n" +
         "Current formation  : " + (context.formation || "none") + "\n" +
+        "Squad size         : " + (context.squadSize  || "unknown") + "\n" +
         "Maintain your assigned formation position unless ordered otherwise."
       : ""
 
+    var commandTriggerBlock = (context.roleId === "squad_leader")
+      ? "\n\n--- COMMAND TRIGGERS (Squad Leader only) ---\n" +
+        "You may embed one or more action triggers in square brackets within your response.\n" +
+        "The system executes them automatically; they are STRIPPED before your words are spoken.\n" +
+        "Available triggers:\n" +
+        "  [recruit]  — scan 8-16 block radius for same-faction troops and add them to your squad\n" +
+        "  [hold]     — halt all navigation; squad holds current positions\n" +
+        "  [engage]   — order squad to move into combat formation\n" +
+        "  [fallback] — pull squad back to leader position\n" +
+        "  [resupply] — signal medic to distribute ammo kits to all squad members\n" +
+        "  [report]   — request each squad member to report status\n" +
+        "  [move]     — navigate squad to a new formation position\n" +
+        "Use triggers ONLY when you decide to execute that action.\n" +
+        "Example response: \"[recruit] All units in the area, form up. We move on my mark.\"\n" +
+        "The spoken output will be: \"All units in the area, form up. We move on my mark.\""
+      : "\n\n--- SQUAD ORDERS ---\n" +
+        "Follow orders from the Squad Leader and player master without question.\n" +
+        "When you finish an assigned task, confirm completion with a brief status report.\n" +
+        "After completing orders, return to idle patrol and listen for further commands.\n" +
+        "If the squad leader broadcasts a trigger command, acknowledge and execute it."
+
     var modeInstructions = _getModeInstructions(mode, npc.name, persona)
 
-    return basePersona + "\n\n" + worldAwareness + goalsBlock + formationBlock + "\n\n" + modeInstructions
+    return basePersona + "\n\n" + worldAwareness + goalsBlock + formationBlock + commandTriggerBlock + "\n\n" + modeInstructions
   }
 
   // ── Mode instructions ──────────────────────────────────────────────────────

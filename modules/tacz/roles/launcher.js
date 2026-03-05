@@ -19,6 +19,8 @@ load(_g + "engage_priority_targets.js")
 load(_g + "hold_position.js")
 load(_g + "follow_leader_formation.js")
 load(_g + "follow_player_on_order.js")
+load(_g + "reload_gun.js")
+load(_g + "request_ammo.js")
 
 var LAUNCHER_ROLE = {
   roleId:          "launcher",
@@ -27,7 +29,8 @@ var LAUNCHER_ROLE = {
   defaultTask:     "preparing fire support",
   squadLeaderId:   null,
   goals:           ["fire_support", "engage_priority_targets",
-                    "hold_position", "follow_leader_formation", "follow_player_on_order"]
+                    "hold_position", "follow_leader_formation",
+                    "follow_player_on_order", "reload_gun", "request_ammo"]
 }
 
 GoalsLoader.setRoleGoals(LAUNCHER_ROLE.roleId, LAUNCHER_ROLE.goals)
@@ -37,14 +40,34 @@ function init(event) {
   var npcName  = String(event.npc.getName())
   BrainRegistry.register(entityId, LAUNCHER_ROLE.moduleId, LAUNCHER_ROLE.roleId)
   LoadoutManager.initNPC(entityId, LAUNCHER_ROLE.roleId, event.npc)
+  _restoreLeaderLink(entityId, event.npc)
   if (LAUNCHER_ROLE.squadLeaderId) {
     TACZConnector.setSquadLeader(entityId, LAUNCHER_ROLE.squadLeaderId)
     TACZConnector.setNpcRef(LAUNCHER_ROLE.squadLeaderId, entityId, event.npc)
   }
+  event.npc.getTimers().forceStart(10, 300, true)
   LLM_LOG("Launcher '" + npcName + "' (" + entityId + ") initialised.")
 }
 
+function timer(event) {
+  if (event.id === 10) {
+    var entityId = String(event.npc.getUUID())
+    if (LoadoutManager.isAmmoLow(event.npc, 2)) {
+      event.npc.say("Rocket rack empty — requesting resupply.")
+      TACZConnector.requestAmmo(entityId, event.npc)
+    }
+  }
+}
+
 function interact(event) {
+  var heldItem = event.player.getMainhandItem ? event.player.getMainhandItem() : null
+  if (heldItem && !heldItem.isEmpty()) {
+    if (TimelessAPI.getOptionalAmmo(heldItem) != null) {
+      var given = TACZConnector.onAmmoGiven(String(event.npc.getUUID()), event.npc, heldItem, event.player)
+      if (given) { event.npc.say("Good. Racking up now."); return }
+    }
+  }
+
   var entityId  = String(event.npc.getUUID())
   var npcName   = String(event.npc.getName())
   var playerMsg = event.message ? String(event.message) : ""
@@ -86,6 +109,17 @@ function died(event) {
   LLM_LOG("Launcher '" + String(event.npc.getName()) + "' died — loadout cleared.")
 }
 
+function _restoreLeaderLink(entityId, npc) {
+  try {
+    var stored    = npc.getStoreddata()
+    var leaderStr = stored.has("ll_leader") ? String(stored.get("ll_leader")) : ""
+    if (leaderStr && leaderStr !== "") {
+      FormationManager.registerMember(leaderStr, entityId)
+      FormationManager.setNpcRef(leaderStr, entityId, npc)
+    }
+  } catch (e) { /* ignore */ }
+}
+
 function _buildPlayerData(player) {
   try {
     var stack = player.getMainhandItem ? player.getMainhandItem() : null
@@ -103,3 +137,4 @@ function _getWorldData(npc) {
     return {"time": w.getTime ? w.getTime() : 0, "weather": w.isRaining && w.isRaining() ? "rain" : "clear", "biome": biome}
   } catch(e) { return {"time": "unknown", "weather": "clear", "biome": "unknown"} }
 }
+

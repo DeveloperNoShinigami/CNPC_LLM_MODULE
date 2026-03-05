@@ -297,6 +297,100 @@ var LoadoutManager = (function() {
       return parts.length > 0 ? parts.join(" | ") : "No loadout assigned"
     },
 
+    // Get the primary ammo item ID for a given entity's role from config.
+    // Returns null if no role state or config is available.
+    getPrimaryAmmoType: function(entityId) {
+      if (!_state[entityId] || !_config) { return null }
+      var loadout = (_config.loadouts && _config.loadouts[_state[entityId].role]) || null
+      return (loadout && loadout.primary_ammo) ? String(loadout.primary_ammo) : null
+    },
+
+    // Check if an NPC's primary weapon is low on ammo.
+    // Checks gun's current ammo count first (via TimelessAPI), then falls back to
+    // the offhand ammo stack size.  Returns true when resupply is needed.
+    isAmmoLow: function(npc, threshold) {
+      var limit = (threshold !== undefined) ? threshold : 5
+      try {
+        var rh = npc.getMainhandItem ? npc.getMainhandItem() : null
+        if (rh && !rh.isEmpty()) {
+          var gun = TimelessAPI.getOptionalGun(rh)
+          if (gun != null) {
+            return gun.getCurrentAmmoCount() < limit
+          }
+        }
+        // Fallback: check offhand ammo stack
+        // Use limit * 2 as the threshold for offhand stacks because offhand ammo
+        // represents a reserve (not loaded rounds), so a larger minimum is needed
+        // to ensure the NPC can reload at least once without requesting resupply.
+        var offhand = npc.getInventory().getLeftHand()
+        return !offhand || offhand.isEmpty() || offhand.getStackSize() < (limit * 2)
+      } catch (e) {
+        return false
+      }
+    },
+
+    // Transfer a player-held ammo stack into the NPC's inventory.
+    // Places in offhand if empty; otherwise uses the first free drop slot (3-5).
+    // Returns true on success, false if no room or item is not ammo.
+    receiveAmmoFromPlayer: function(entityId, npc, playerItem) {
+      if (!npc || !playerItem || playerItem.isEmpty()) { return false }
+      try {
+        var ammoCheck = TimelessAPI.getOptionalAmmo(playerItem)
+        if (ammoCheck == null) { return false }
+        var inv   = npc.getInventory()
+        var world = npc.getWorld()
+        var ammoItem = _createItem(world, String(playerItem.getName()), playerItem.getStackSize())
+        if (!ammoItem) { return false }
+        var offhand = inv.getLeftHand()
+        if (!offhand || offhand.isEmpty()) {
+          inv.setLeftHand(ammoItem)
+          return true
+        }
+        for (var s = 3; s <= 5; s++) {
+          var di = inv.getDropItem(s)
+          if (!di || di.isEmpty()) {
+            inv.setDropItem(s, ammoItem, 100)
+            return true
+          }
+        }
+        return false
+      } catch (e) {
+        LLM_LOG("LoadoutManager: receiveAmmoFromPlayer error: " + e)
+        return false
+      }
+    },
+
+    // Give one stack of ammo to a target NPC (used by medic resupply).
+    // ammoItemId : registry ID string — if null, derives from targetEntityId's role.
+    // Places in offhand first; falls back to first free drop slot (3-5).
+    // Returns true on success.
+    giveAmmoToNpc: function(ammoItemId, targetNpc, targetEntityId, world) {
+      if (!targetNpc || !world) { return false }
+      var itemId = ammoItemId || LoadoutManager.getPrimaryAmmoType(targetEntityId)
+      if (!itemId) { return false }
+      try {
+        var ammoStack = _createItem(world, itemId, 30)
+        if (!ammoStack) { return false }
+        var inv     = targetNpc.getInventory()
+        var offhand = inv.getLeftHand()
+        if (!offhand || offhand.isEmpty()) {
+          inv.setLeftHand(ammoStack)
+          return true
+        }
+        for (var s = 3; s <= 5; s++) {
+          var di = inv.getDropItem(s)
+          if (!di || di.isEmpty()) {
+            inv.setDropItem(s, ammoStack, 100)
+            return true
+          }
+        }
+        return false
+      } catch (e) {
+        LLM_LOG("LoadoutManager: giveAmmoToNpc error: " + e)
+        return false
+      }
+    },
+
     // Return the NPC's current equipment as a string array for AI context.
     // Reads from the live INPCInventory when npc is provided; falls back to stored.
     toEquipmentArray: function(entityId, npc) {

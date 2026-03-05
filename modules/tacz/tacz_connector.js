@@ -183,6 +183,163 @@ var TACZConnector = (function() {
     // Reposition squad members into formation around the leader.
     updateFormation: function(leaderId, leaderNpc) {
       FormationManager.updateFormation(leaderId, leaderNpc)
+    },
+
+    // ── AMMO SYSTEM ──────────────────────────────────────────────────────────
+
+    // Handle a player handing ammo to an NPC via right-click.
+    // Transfers the full held stack into the NPC's offhand or first free drop slot.
+    // Removes the item from the player's inventory on success.
+    onAmmoGiven: function(entityId, npc, playerItem, player) {
+      var success = LoadoutManager.receiveAmmoFromPlayer(entityId, npc, playerItem)
+      if (success) {
+        try {
+          player.removeItem(playerItem, playerItem.getStackSize())
+        } catch (e) {
+          LLM_LOG("TACZConnector: could not remove ammo from player " + String(player.getName()) + ": " + e)
+        }
+        try {
+          npc.getWorld().getTempdata().remove("ll_ammo_req_" + entityId)
+        } catch (e2) { /* ignore */ }
+        LLM_LOG("TACZConnector: ammo transferred to " + entityId)
+      }
+      return success
+    },
+
+    // Broadcast an ammo-low request into world tempdata for the medic to detect.
+    requestAmmo: function(entityId, npc) {
+      try {
+        npc.getWorld().getTempdata().put("ll_ammo_req_" + entityId, "low")
+        LLM_LOG("TACZConnector: ammo request from " + entityId)
+      } catch (e) { LLM_LOG("TACZConnector: requestAmmo error: " + e) }
+    },
+
+    // Pre-populate a medic's free drop slots (3-5) with ammo kits for squad members.
+    // Called from medic init() so the medic carries resupply stock from the start.
+    prepareSquadAmmoKit: function(medicId, medicNpc) {
+      try {
+        var leaderStr = medicNpc.getStoreddata().get("ll_leader")
+        if (!leaderStr) { return }
+        var leaderId = String(leaderStr)
+        var members  = FormationManager.getMembers(leaderId)
+        var inv      = medicNpc.getInventory()
+        var world    = medicNpc.getWorld()
+        var slot     = 3  // start after the weapon/ammo slots (0-2)
+        for (var i = 0; i < members.length && slot <= 5; i++) {
+          var memberId = members[i]
+          if (memberId === medicId) { continue }
+          var ammoType = LoadoutManager.getPrimaryAmmoType(memberId)
+          if (!ammoType) { continue }
+          var existing = inv.getDropItem(slot)
+          if (existing && !existing.isEmpty()) { slot++; if (slot > 5) { break } }
+          var ammoStack = world.createItem(ammoType, 30)
+          if (ammoStack) { inv.setDropItem(slot, ammoStack, 100); slot++ }
+        }
+      } catch (e) { LLM_LOG("TACZConnector: prepareSquadAmmoKit error: " + e) }
+    },
+
+    // Scan world tempdata for ammo requests and fulfil them using NPC refs.
+    // Called on medic's resupply timer (every 3 seconds).
+    checkSquadAmmoRequests: function(medicId, medicNpc) {
+      try {
+        var leaderStr = medicNpc.getStoreddata().get("ll_leader")
+        if (!leaderStr) { return }
+        var leaderId = String(leaderStr)
+        var members  = FormationManager.getMembers(leaderId)
+        var tempdata = medicNpc.getWorld().getTempdata()
+        var world    = medicNpc.getWorld()
+        for (var i = 0; i < members.length; i++) {
+          var memberId = members[i]
+          if (memberId === medicId) { continue }
+          var reqKey = "ll_ammo_req_" + memberId
+          if (!tempdata.has(reqKey)) { continue }
+          var memberNpc = FormationManager.getNpcRef(leaderId, memberId)
+          if (!memberNpc) { continue }
+          var ammoType = LoadoutManager.getPrimaryAmmoType(memberId)
+          var gave = LoadoutManager.giveAmmoToNpc(ammoType, memberNpc, memberId, world)
+          if (gave) {
+            tempdata.remove(reqKey)
+            try { memberNpc.say("Reloading — thanks, Doc.") } catch (e2) { /* ignore */ }
+            LLM_LOG("TACZConnector: medic resupplied " + memberId)
+          }
+        }
+      } catch (e) { LLM_LOG("TACZConnector: checkSquadAmmoRequests error: " + e) }
+    },
+
+    // ── RECRUITMENT ───────────────────────────────────────────────────────────
+
+    // Scan a 16-block radius around the leader for same-faction NPCs that have no
+    // assigned leader (or are already assigned to this leader).  Registers them
+    // as squad members and assigns formation positions.
+    recruitNearbyTroops: function(leaderId, leaderNpc) {
+      try {
+        var world   = leaderNpc.getWorld()
+        var lx = leaderNpc.getX(), ly = leaderNpc.getY(), lz = leaderNpc.getZ()
+        var factionId = -1
+        try { factionId = leaderNpc.getFaction().getId() } catch (ef) { /* no faction */ }
+        var candidates = world.getNearbyEntities(lx, ly, lz, 16, 2) // 2 = NPC
+        if (!candidates) { return 0 }
+        var recruited = 0
+        var len = 0
+        try { len = candidates.size() } catch (es) { len = candidates.length || 0 }
+        for (var i = 0; i < len; i++) {
+          var candidate = candidates.size ? candidates.get(i) : candidates[i]
+          if (!candidate || !candidate.isAlive()) { continue }
+          var candidateId = String(candidate.getUUID())
+          if (candidateId === leaderId) { continue }
+          // Same-faction check (skip if leader has no faction)
+          if (factionId !== -1) {
+            try {
+              var cf = candidate.getFaction ? candidate.getFaction() : null
+              if (!cf || cf.getId() !== factionId) { continue }
+            } catch (ef2) { continue }
+          }
+          // Skip if already assigned to a different leader
+          try {
+            var existingLeader = candidate.getStoreddata().get("ll_leader")
+            if (existingLeader && String(existingLeader) !== "" && String(existingLeader) !== leaderId) {
+              continue
+            }
+          } catch (en) { /* no stored data — candidate is eligible */ }
+          FormationManager.registerMember(leaderId, candidateId)
+          FormationManager.setNpcRef(leaderId, candidateId, candidate)
+          try {
+            candidate.getStoreddata().put("ll_leader", leaderId)
+            candidate.say("Copy that — joining up.")
+          } catch (es2) { /* ignore */ }
+          recruited++
+        }
+        LLM_LOG("TACZConnector: recruited " + recruited + " troops for " + leaderId)
+        return recruited
+      } catch (e) {
+        LLM_LOG("TACZConnector: recruitNearbyTroops error: " + e)
+        return 0
+      }
+    },
+
+    // ── AI COMMAND TRIGGERS ───────────────────────────────────────────────────
+
+    // Parse an AI response for embedded [trigger] tags.
+    // Returns { cleanText: String, triggers: String[] }.
+    // The cleanText is the response with all trigger tags stripped (for saying aloud).
+    // Known triggers: recruit, hold, engage, fallback, resupply, report, move
+    parseCommandTriggers: function(responseText) {
+      var triggers = []
+      var text = responseText || ""
+      // Match any [word] pattern that corresponds to a known command
+      var knownTriggers = ["recruit", "hold", "engage", "fallback", "resupply", "report", "move"]
+      for (var t = 0; t < knownTriggers.length; t++) {
+        var triggerName = knownTriggers[t]
+        var re = new RegExp("\\[" + triggerName + "\\]", "gi")
+        if (re.test(text)) {
+          triggers.push(triggerName)
+          // Reset and remove all occurrences
+          var re2 = new RegExp("\\[" + triggerName + "\\]", "gi")
+          text = text.replace(re2, "")
+        }
+      }
+      var cleanText = text.replace(/\s{2,}/g, " ").trim()
+      return { cleanText: cleanText, triggers: triggers }
     }
 
   }

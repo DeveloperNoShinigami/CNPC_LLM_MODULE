@@ -14,13 +14,14 @@
 //   2. Loads the entire LLM_MODULE_SYSTEM via loader.js (once per session).
 //   3. Loads role-specific ai_goals files and declares them via GoalsLoader.
 //   4. Initialises NPC loadout (respects existing items / persisted state).
-//   5. Wires up CNPC event hooks: init(), interact(), removed(), died().
+//   5. Wires up CNPC event hooks: init(), interact(), timer(), removed(), died().
 //
 // ── SOLDIER ROLE ─────────────────────────────────────────────────────────────
 //   Persona   : Disciplined, follows orders — executes tasks and reports status.
 //   Loadout   : AK-47 / M1911 / Combat Knife  (configurable in tacz_config.json)
 //   Goals     : patrol, engage_hostiles, follow_player_on_order,
-//               suppress_hostiles, follow_leader_formation
+//               suppress_hostiles, follow_leader_formation,
+//               reload_gun, request_ammo
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ── 1. Path resolution ────────────────────────────────────────────────────────
@@ -37,6 +38,8 @@ load(_g + "engage_hostiles.js")
 load(_g + "follow_player_on_order.js")
 load(_g + "suppress_hostiles.js")
 load(_g + "follow_leader_formation.js")
+load(_g + "reload_gun.js")
+load(_g + "request_ammo.js")
 
 // ── 4. Role configuration ─────────────────────────────────────────────────────
 var SOLDIER_ROLE = {
@@ -45,7 +48,8 @@ var SOLDIER_ROLE = {
   brainProvider: "gemini",
   defaultTask:   "standing by for orders",
   goals:         ["patrol", "engage_hostiles", "follow_player_on_order",
-                  "suppress_hostiles", "follow_leader_formation"]
+                  "suppress_hostiles", "follow_leader_formation",
+                  "reload_gun", "request_ammo"]
 }
 
 // Register goals declared above with GoalsLoader for this roleId
@@ -60,11 +64,38 @@ function init(event) {
   BrainRegistry.register(entityId, SOLDIER_ROLE.moduleId, SOLDIER_ROLE.roleId)
   // Apply loadout only if NPC has no weapon and no persisted state
   LoadoutManager.initNPC(entityId, SOLDIER_ROLE.roleId, event.npc)
+  // Restore NBT-persisted leader reference into FormationManager
+  _restoreLeaderLink(entityId, event.npc)
+  // Ammo-check timer: every 15 s (300 ticks), repeating
+  event.npc.getTimers().forceStart(10, 300, true)
   LLM_LOG("Soldier '" + npcName + "' (" + entityId + ") initialised.")
+}
+
+// timer() — fires on NPC timers.
+function timer(event) {
+  if (event.id === 10) {
+    var entityId = String(event.npc.getUUID())
+    if (LoadoutManager.isAmmoLow(event.npc, 5)) {
+      event.npc.say("Running low on ammo — requesting resupply.")
+      TACZConnector.requestAmmo(entityId, event.npc)
+    }
+  }
 }
 
 // interact() — fires on player right-click or CNPC dialog message.
 function interact(event) {
+  // ── Ammo hand-off: player right-clicks while holding ammo ─────────────────
+  var heldItem = event.player.getMainhandItem ? event.player.getMainhandItem() : null
+  if (heldItem && !heldItem.isEmpty()) {
+    if (TimelessAPI.getOptionalAmmo(heldItem) != null) {
+      var given = TACZConnector.onAmmoGiven(String(event.npc.getUUID()), event.npc, heldItem, event.player)
+      if (given) {
+        event.npc.say("Thanks. Reloading now.")
+        return
+      }
+    }
+  }
+
   var entityId  = String(event.npc.getUUID())
   var npcName   = String(event.npc.getName())
   var playerMsg = event.message ? String(event.message) : ""
@@ -128,6 +159,19 @@ function died(event) {
 
 // ── Private helpers ───────────────────────────────────────────────────────────
 
+// Re-register with FormationManager if a leader UUID was persisted in stored data.
+function _restoreLeaderLink(entityId, npc) {
+  try {
+    var stored     = npc.getStoreddata()
+    var leaderStr  = stored.has("ll_leader") ? String(stored.get("ll_leader")) : ""
+    if (leaderStr && leaderStr !== "") {
+      FormationManager.registerMember(leaderStr, entityId)
+      FormationManager.setNpcRef(leaderStr, entityId, npc)
+      LLM_LOG("Soldier " + entityId + " restored link to leader " + leaderStr)
+    }
+  } catch (e) { /* stored data not accessible */ }
+}
+
 function _getHeldItemName(player) {
   try {
     var stack = player.getMainhandItem ? player.getMainhandItem() : null
@@ -153,3 +197,4 @@ function _getWorldData(npc) {
 function _getNearbyData(npc) {
   return {"hostiles": [], "friendlies": []}
 }
+

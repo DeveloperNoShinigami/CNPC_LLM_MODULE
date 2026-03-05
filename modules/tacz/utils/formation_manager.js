@@ -183,6 +183,19 @@ var FormationManager = (function() {
       return _squads[leaderId] ? _squads[leaderId].memberIds.slice() : []
     },
 
+    // Get the cached live NPC reference for a specific squad member.
+    // Returns null if not cached (member may not have re-registered yet).
+    getNpcRef: function(leaderId, memberId) {
+      if (!_squads[leaderId]) { return null }
+      return _squads[leaderId].npcRefs[memberId] || null
+    },
+
+    // Get all cached live NPC references for a squad as an object keyed by memberId.
+    getAllNpcRefs: function(leaderId) {
+      if (!_squads[leaderId]) { return {} }
+      return _squads[leaderId].npcRefs
+    },
+
     // List all supported formation type names.
     listFormations: function() {
       return _VALID_FORMATIONS.slice()
