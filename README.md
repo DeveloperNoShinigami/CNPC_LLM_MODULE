@@ -50,7 +50,7 @@ NPCs powered by this system have full awareness of their surroundings — time, 
 ```
 NPC assigned role script: modules/tacz/roles/squad_leader.js
         │
-        │  load(LLM_BASE_PATH + "/core/loader.js")   ← single load() call
+        │  NpcAPI path resolution → load(".../core/loader.js")   ← single load() call
         ▼
 [loader.js] — chains ALL files in correct order via load(), then calls:
               AIManager.init()  +  TACZConnector.init()
@@ -146,8 +146,14 @@ The entire system is designed so you **only assign one file to each NPC** in CNP
 
 ### Step 1 — Place the framework on your server
 
-Copy the `CNPC_LLM_MODULE` folder into your CNPC scripts directory.
-The default path is `scripts/LLM_MODULE/` relative to your server root.
+Copy the `CNPC_LLM_MODULE` folder into your CNPC scripts directory so the result is:
+
+```
+<world>/scripts/ecmascript/LLM_MODULE/
+```
+
+CNPC stores scripts under `scripts/ecmascript/` inside the world/save directory.
+`NpcAPI.getLevelDir()` returns that world directory, so the role scripts resolve the path automatically with no manual configuration.
 
 ### Step 2 — Set your API key
 
@@ -155,22 +161,20 @@ Open `core/master_config.json` and set `brain_providers.gemini.api_key`.
 
 ### Step 3 — Assign a role script to your NPC
 
-In the CNPC NPC editor, set the NPC's script to:
+In the CNPC NPC editor, set the NPC's script path (relative to `scripts/ecmascript/`) to:
 ```
-scripts/LLM_MODULE/modules/tacz/roles/squad_leader.js
+LLM_MODULE/modules/tacz/roles/squad_leader.js
 ```
 or
 ```
-scripts/LLM_MODULE/modules/tacz/roles/soldier.js
+LLM_MODULE/modules/tacz/roles/soldier.js
 ```
 
-That is all. When the NPC loads, the role script calls `load(LLM_BASE_PATH + "/core/loader.js")` which chains every required file and initialises the full system automatically.
+That is all. When the NPC loads, the role script uses `NpcAPI.getLevelDir()` to resolve the absolute path and calls `load()` to chain every required file and initialise the full system automatically.
 
 ### Step 4 — Right-click the NPC in-game
 
 The NPC will acknowledge you (IDLE → LISTENING) and you can begin conversing.
-
-> **Note:** If you placed the framework in a different folder than `scripts/LLM_MODULE`, edit the `LLM_BASE_PATH` line near the top of each role script.
 
 ---
 
@@ -325,15 +329,18 @@ Located at `modules/irons_spells/`. Contains a working connector shell.
 
 A guard variable (`LLM_SYSTEM_LOADED`) ensures the entire chain runs **only once** per server session, even when many NPCs each have a role script that calls `load(".../loader.js")`.
 
-### Requirements
+### Path resolution via NpcAPI
 
-Set `LLM_BASE_PATH` to the absolute (or server-root-relative) path of the framework folder **before** calling `load()`:
+All `load()` calls are anchored to the world directory returned by the CNPC `NpcAPI`.  This guarantees the correct absolute path in both single-player and dedicated-server environments without any manual path configuration:
 
 ```javascript
-// At the top of a role script or a global CNPC server script:
-var LLM_BASE_PATH = "scripts/LLM_MODULE"    // adjust to your server layout
+// How role scripts resolve the path — works for server AND single-player:
+var _API          = Java.type("noppes.npcs.api.NpcAPI")
+var LLM_BASE_PATH = _API.getLevelDir() + "scripts/ecmascript/LLM_MODULE"
 load(LLM_BASE_PATH + "/core/loader.js")
 ```
+
+`loader.js` applies the same pattern internally to self-derive `LLM_BASE_PATH` as a safe fallback if it is called directly without the variable being set.
 
 ### What loader.js loads (in order)
 
@@ -405,7 +412,7 @@ In both `core/tacz_models/gemini/model_brain.js` and `core/tacz_models/openroute
 
 ### 4 — Assign the script in CNPC
 
-Set the NPC's script to `scripts/LLM_MODULE/modules/tacz/roles/medic.js`.
+Set the NPC's script (relative to `scripts/ecmascript/`) to `LLM_MODULE/modules/tacz/roles/medic.js`.
 
 ---
 
@@ -434,7 +441,8 @@ Set the NPC's script to `scripts/LLM_MODULE/modules/tacz/roles/medic.js`.
    modules/my_mod/roles/my_role.js
    ```
    Follow the pattern in `modules/tacz/roles/soldier.js`:
-   - Set `LLM_BASE_PATH` + call `load(LLM_BASE_PATH + "/core/loader.js")`
+   - Use `Java.type("noppes.npcs.api.NpcAPI").getLevelDir()` to derive `LLM_BASE_PATH`
+   - Call `load(LLM_BASE_PATH + "/core/loader.js")`
    - Define `MY_ROLE` config object
    - Implement CNPC event hooks (`init`, `interact`, `removed`)
    - Call `MyModConnector.handleRoleInteraction(MY_ROLE, entityId, context, msg, cb)`
@@ -558,7 +566,7 @@ All scripts in this framework follow the **CNPC ES5 scripting standard** require
 In `core/master_config.json` under `brain_providers.gemini.api_key` (or `openrouter.api_key`). Never commit keys to version control.
 
 **Q: How do I assign a role to an NPC?**
-In CNPC's NPC editor, set the NPC's **script** to the role file (e.g. `scripts/LLM_MODULE/modules/tacz/roles/squad_leader.js`). That script loads the entire system automatically. No config file edits are needed.
+In CNPC's NPC editor, set the NPC's **script** to the role file path relative to `scripts/ecmascript/` (e.g. `LLM_MODULE/modules/tacz/roles/squad_leader.js`). That script loads the entire system automatically via `NpcAPI.getLevelDir()`. No config file edits are needed.
 
 **Q: How do I give a specific NPC a different AI provider?**
 Open the role script (e.g. `soldier.js`) and change `brainProvider` in the role config object at the top of the file:
@@ -574,15 +582,15 @@ If you want different NPCs of the same role to use different providers, duplicat
 **Q: How do I change what an NPC says?**
 Edit the persona and mode-instructions in `core/[modname]_models/[provider]/model_brain.js`. The `_ROLE_PERSONAS` table controls each role's tone and title. The `_getModeInstructions()` function controls ACK / LISTENING / CLOSING response style.
 
-**Q: LLM_BASE_PATH — what should it be?**
-It should be the path from your Minecraft server's working directory to the root of `CNPC_LLM_MODULE`. If you placed it in `<server>/scripts/LLM_MODULE/`, use `"scripts/LLM_MODULE"`. If you used an absolute path, use the full path.
+**Q: Where does the framework need to be placed?**
+Place the `CNPC_LLM_MODULE` folder inside the CNPC scripts directory so it lives at `<world>/scripts/ecmascript/LLM_MODULE/`. `NpcAPI.getLevelDir()` returns the world directory, and the role scripts append `scripts/ecmascript/LLM_MODULE` to it automatically — no manual path editing is needed.
 
 **Q: Can I use a locally-hosted model?**
 Yes. Create a new brain wrapper that posts to your local endpoint (e.g. Ollama at `http://localhost:11434`). Register it with `BrainFactory.register("ollama", OllamaBrain)` and add it to `master_config.json`. Then set `brainProvider: "ollama"` in any role script.
 
 **Q: The NPC doesn't respond — what do I check?**
 1. Check `LLM_LOG` output for any error from `loader.js` or the brain HTTP call.
-2. Confirm `LLM_BASE_PATH` is correct in the role script.
-3. Verify your API key is set in `master_config.json`.
+2. Confirm the framework is placed at `<world>/scripts/ecmascript/LLM_MODULE/` so `NpcAPI.getLevelDir()` resolves to the correct path.
+3. Verify your API key is set in `core/master_config.json`.
 4. Ensure the network is reachable from the server (Gemini / OpenRouter are external APIs).
  

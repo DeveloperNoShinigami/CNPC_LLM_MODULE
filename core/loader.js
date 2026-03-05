@@ -9,16 +9,28 @@
 // A guard variable (LLM_SYSTEM_LOADED) prevents double-loading when multiple
 // NPC role scripts are active in the same server session.
 //
+// ── PATH RESOLUTION ──────────────────────────────────────────────────────────
+// All load() calls are anchored to the world/save directory returned by the
+// CNPC NpcAPI.  This guarantees the correct path in both single-player and
+// dedicated-server environments without any manual configuration:
+//
+//   var API = Java.type("noppes.npcs.api.NpcAPI")
+//   load(API.getLevelDir() + "scripts/ecmascript/LLM_MODULE/core/loader.js")
+//
+// loader.js calls Java.type("noppes.npcs.api.NpcAPI").getLevelDir() itself
+// to derive LLM_BASE_PATH when it has not already been set by the caller.
+//
 // ── USAGE ────────────────────────────────────────────────────────────────────
-//   1. In your role script, set LLM_BASE_PATH to the absolute server-root
-//      path of the LLM_MODULE_SYSTEM folder, then call:
+//   Role scripts do NOT need to set LLM_BASE_PATH manually.
+//   They simply resolve the loader path the same way and call load():
 //
-//        var LLM_BASE_PATH = "scripts/LLM_MODULE"   // adjust to your setup
-//        load(LLM_BASE_PATH + "/core/loader.js")
+//     var _API = Java.type("noppes.npcs.api.NpcAPI")
+//     var LLM_BASE_PATH = _API.getLevelDir() + "scripts/ecmascript/LLM_MODULE"
+//     load(LLM_BASE_PATH + "/core/loader.js")
 //
-//   2. After load() returns, all globals (AIManager, TACZConnector,
-//      ContextBuilder, LoadoutManager, GoalsLoader, TalkManager, etc.)
-//      are available in scope and the system is fully initialised.
+//   After load() returns, all globals (AIManager, TACZConnector,
+//   ContextBuilder, LoadoutManager, GoalsLoader, TalkManager, etc.)
+//   are available in scope and the system is fully initialised.
 //
 // ── WHAT IS LOADED ───────────────────────────────────────────────────────────
 //   core/
@@ -51,13 +63,12 @@ if (typeof LLM_SYSTEM_LOADED === "undefined") {
   // ── Guard: mark system as loaded immediately to block recursive re-entry ───
   var LLM_SYSTEM_LOADED = true
 
+  // ── Derive LLM_BASE_PATH via NpcAPI if it was not set by the caller ────────
+  // NpcAPI.getLevelDir() returns the world/save directory with a trailing
+  // separator, so it works identically on servers and in single-player.
   if (typeof LLM_BASE_PATH === "undefined") {
-    throw new Error(
-      "loader.js: LLM_BASE_PATH is not set. " +
-      "Set it before calling load(). Example:\n" +
-      "  var LLM_BASE_PATH = \"scripts/LLM_MODULE\"\n" +
-      "  load(LLM_BASE_PATH + \"/core/loader.js\")"
-    )
+    var _NPC_API  = Java.type("noppes.npcs.api.NpcAPI")
+    LLM_BASE_PATH = _NPC_API.getLevelDir() + "scripts/ecmascript/LLM_MODULE"
   }
 
   var _p = LLM_BASE_PATH   // shorthand

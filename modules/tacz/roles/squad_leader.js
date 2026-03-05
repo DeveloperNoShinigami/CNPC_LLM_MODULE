@@ -6,15 +6,15 @@
 // Assign this file as the script for any CNPC NPC you want to behave as an
 // AI-driven Squad Leader.  No other setup is needed on a per-NPC basis.
 //
-// BEFORE assigning to an NPC, set LLM_BASE_PATH once in your server's global
-// CNPC script (or set it at the top of this file):
-//
-//   var LLM_BASE_PATH = "scripts/LLM_MODULE"   // path from server root
+// The script resolves its own path using the CNPC NpcAPI so it works
+// identically in single-player and on a dedicated server — no manual path
+// configuration required.
 //
 // ── WHAT THIS SCRIPT DOES ────────────────────────────────────────────────────
-//   1. Loads the entire LLM_MODULE_SYSTEM via loader.js (once per session).
-//   2. Declares the Squad Leader role configuration.
-//   3. Wires up CNPC event hooks: init(), interact(), removed().
+//   1. Resolves LLM_BASE_PATH via NpcAPI.getLevelDir().
+//   2. Loads the entire LLM_MODULE_SYSTEM via loader.js (once per session).
+//   3. Declares the Squad Leader role configuration.
+//   4. Wires up CNPC event hooks: init(), interact(), removed().
 //
 // ── SQUAD LEADER ROLE ────────────────────────────────────────────────────────
 //   Persona   : Authoritative, tactical — commands troops and coordinates attacks.
@@ -23,11 +23,11 @@
 //               coordinate_squad
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Set LLM_BASE_PATH if it has not already been set by a global server script.
-// Change this to match where LLM_MODULE_SYSTEM lives on your server.
-if (typeof LLM_BASE_PATH === "undefined") {
-  var LLM_BASE_PATH = "scripts/LLM_MODULE"
-}
+// Resolve the base path from the CNPC NpcAPI.
+// NpcAPI.getLevelDir() returns the world/save directory with a trailing
+// separator and works correctly for both servers and single-player worlds.
+var _API          = Java.type("noppes.npcs.api.NpcAPI")
+var LLM_BASE_PATH = _API.getLevelDir() + "scripts/ecmascript/LLM_MODULE"
 
 // Load the full LLM system (the guard inside loader.js prevents double-loading).
 load(LLM_BASE_PATH + "/core/loader.js")
