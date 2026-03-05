@@ -1,0 +1,26 @@
+{
+  "module": "epic_fight",
+  "description": "Epic Fight Module — Brain mapping and role definitions (SHELL).",
+
+  "default_brain_provider": "gemini",
+
+  "roles": {
+    "warrior": {
+      "description": "A melee combatant who fights up close using Epic Fight animations.",
+      "brain_provider": "gemini",
+      "goals": ["engage_hostiles", "hold_position"]
+    },
+    "archer": {
+      "description": "A ranged combatant who keeps distance and uses a bow.",
+      "brain_provider": "gemini",
+      "goals": ["hold_position", "engage_priority_targets"]
+    }
+  },
+
+  "npc_assignments": {
+    "_comment": "Maps NPC entity IDs to roles.",
+    "_example": {
+      "npc_entity_789": { "role": "warrior", "name": "Sir Roland" }
+    }
+  }
+}

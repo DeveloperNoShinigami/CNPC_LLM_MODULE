@@ -1,0 +1,57 @@
+{
+  "version": "1.0.0",
+  "description": "LLM_MODULE_SYSTEM global configuration. Controls which modules are enabled and their AI brain settings.",
+
+  "default_brain": "gemini",
+
+  "brain_providers": {
+    "gemini": {
+      "api_key_env": "GEMINI_API_KEY",
+      "model": "gemini-1.5-flash",
+      "temperature": 0.85,
+      "max_output_tokens": 512
+    },
+    "llama": {
+      "endpoint": "http://localhost:11434/api/generate",
+      "model": "llama3",
+      "temperature": 0.85,
+      "max_tokens": 512
+    }
+  },
+
+  "modules": {
+    "tacz": {
+      "enabled": true,
+      "config_path": "./modules/tacz/tacz_config.json",
+      "connector_path": "./modules/tacz/tacz_connector.js"
+    },
+    "epic_fight": {
+      "enabled": false,
+      "config_path": "./modules/epic_fight/epic_fight_config.json",
+      "connector_path": "./modules/epic_fight/epic_fight_connector.js"
+    },
+    "irons_spells": {
+      "enabled": false,
+      "config_path": "./modules/irons_spells/irons_config.json",
+      "connector_path": "./modules/irons_spells/irons_connector.js"
+    }
+  },
+
+  "talk_settings": {
+    "idle_timeout_ms": 30000,
+    "max_conversation_length": 20,
+    "closing_phrases": [
+      "that is all",
+      "dismissed",
+      "at ease",
+      "fall out",
+      "stand down"
+    ]
+  },
+
+  "logging": {
+    "level": "info",
+    "log_prompts": false,
+    "log_responses": true
+  }
+}
