@@ -99,6 +99,7 @@ if (typeof LLM_SYSTEM_LOADED === "undefined") {
   load(_p + "/modules/tacz/utils/context_builder.js")
   load(_p + "/modules/tacz/utils/loadout_manager.js")
   load(_p + "/modules/tacz/utils/goals_loader.js")
+  load(_p + "/modules/tacz/utils/formation_manager.js")
 
   // ── 7. TACZ connector ─────────────────────────────────────────────────────
   load(_p + "/modules/tacz/tacz_connector.js")

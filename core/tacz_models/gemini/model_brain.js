@@ -44,6 +44,21 @@ var _TACZ_GEMINI_BRAIN = (function() {
       tone:        "cold, precise, and economical with words — every syllable is calculated",
       defaultTask: "holding overwatch"
     },
+    "medic": {
+      title:       "Combat Medic",
+      tone:        "calm and focused under fire — you keep your voice steady, triage quickly, and remind the squad to stay alive",
+      defaultTask: "treating wounded"
+    },
+    "launcher": {
+      title:       "Rocket Launcher Specialist",
+      tone:        "deliberate and heavy — you speak in terms of impact radius and structural damage, always warning allies to take cover before you fire",
+      defaultTask: "preparing fire support"
+    },
+    "scout": {
+      title:       "Scout",
+      tone:        "quick and observational — you speak in short bursts, reporting what you see and avoiding unnecessary noise",
+      defaultTask: "scouting ahead"
+    },
     "support": {
       title:       "Support Gunner",
       tone:        "steady and methodical — you control the battlefield through firepower and logistics",
@@ -95,9 +110,16 @@ var _TACZ_GEMINI_BRAIN = (function() {
       ? "\n\n--- ACTIVE GOALS ---\n" + context.goals
       : ""
 
+    var formationBlock = (context.formation || context.squadLeaderId)
+      ? "\n\n--- SQUAD / COMMAND CHAIN ---\n" +
+        "Command authority : follow orders from the player (master) first, then from your Squad Leader.\n" +
+        "Current formation  : " + (context.formation || "none") + "\n" +
+        "Maintain your assigned formation position unless ordered otherwise."
+      : ""
+
     var modeInstructions = _getModeInstructions(mode, npc.name, persona)
 
-    return basePersona + "\n\n" + worldAwareness + goalsBlock + "\n\n" + modeInstructions
+    return basePersona + "\n\n" + worldAwareness + goalsBlock + formationBlock + "\n\n" + modeInstructions
   }
 
   // ── Mode instructions ──────────────────────────────────────────────────────

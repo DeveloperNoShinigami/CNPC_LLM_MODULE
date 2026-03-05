@@ -7,71 +7,81 @@
 // AI-driven Squad Leader.  No other setup is needed on a per-NPC basis.
 //
 // The script resolves its own path using the CNPC NpcAPI so it works
-// identically in single-player and on a dedicated server — no manual path
-// configuration required.
+// identically in single-player and on a dedicated server.
 //
 // ── WHAT THIS SCRIPT DOES ────────────────────────────────────────────────────
 //   1. Resolves LLM_BASE_PATH via NpcAPI.getLevelDir().
 //   2. Loads the entire LLM_MODULE_SYSTEM via loader.js (once per session).
-//   3. Declares the Squad Leader role configuration.
-//   4. Wires up CNPC event hooks: init(), interact(), removed().
+//   3. Loads role-specific ai_goals files and declares them via GoalsLoader.
+//   4. Initialises NPC loadout (respects existing items / persisted state).
+//   5. Detects formation keywords in player messages and updates FormationManager.
+//   6. Wires up CNPC event hooks: init(), interact(), removed(), died().
 //
 // ── SQUAD LEADER ROLE ────────────────────────────────────────────────────────
 //   Persona   : Authoritative, tactical — commands troops and coordinates attacks.
-//   Provider  : configurable via SQUAD_LEADER_ROLE.brainProvider
+//   Loadout   : M4A1 / Glock 17 / Combat Knife  (configurable in tacz_config.json)
 //   Goals     : patrol, engage_hostiles, report_contacts, follow_player_on_order,
-//               coordinate_squad
+//               coordinate_squad, maintain_formation
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Resolve the base path from the CNPC NpcAPI.
-// NpcAPI.getLevelDir() returns the world/save directory with a trailing
-// separator and works correctly for both servers and single-player worlds.
+// ── 1. Path resolution ────────────────────────────────────────────────────────
 var _API          = Java.type("noppes.npcs.api.NpcAPI")
 var LLM_BASE_PATH = _API.getLevelDir() + "scripts/ecmascript/LLM_MODULE"
 
-// Load the full LLM system (the guard inside loader.js prevents double-loading).
+// ── 2. Load core system ───────────────────────────────────────────────────────
 load(LLM_BASE_PATH + "/core/loader.js")
 
-// ── ROLE CONFIGURATION ────────────────────────────────────────────────────────
-// Change brainProvider to "openrouter" (or any registered provider) to switch
-// the AI model this NPC uses without touching any other file.
+// ── 3. Load role-specific goals ───────────────────────────────────────────────
+var _g = LLM_BASE_PATH + "/modules/tacz/ai_goals/"
+load(_g + "patrol.js")
+load(_g + "engage_hostiles.js")
+load(_g + "report_contacts.js")
+load(_g + "follow_player_on_order.js")
+load(_g + "coordinate_squad.js")
+load(_g + "maintain_formation.js")
 
+// ── 4. Role configuration ─────────────────────────────────────────────────────
 var SQUAD_LEADER_ROLE = {
   roleId:        "squad_leader",
   moduleId:      "tacz",
-  brainProvider: "gemini",        // override per-NPC if desired
-  defaultTask:   "commanding the squad"
+  brainProvider: "gemini",
+  defaultTask:   "commanding the squad",
+  goals:         ["patrol", "engage_hostiles", "report_contacts",
+                  "follow_player_on_order", "coordinate_squad", "maintain_formation"]
 }
+
+GoalsLoader.setRoleGoals(SQUAD_LEADER_ROLE.roleId, SQUAD_LEADER_ROLE.goals)
 
 // ── CNPC EVENT HOOKS ──────────────────────────────────────────────────────────
 
-// init() — fires when the NPC loads or the server starts.
-// Registers the NPC in BrainRegistry so the system tracks it.
 function init(event) {
-  var entityId = String(event.npc.getUniqueID())
+  var entityId = String(event.npc.getUUID())
   var npcName  = String(event.npc.getName())
   BrainRegistry.register(entityId, SQUAD_LEADER_ROLE.moduleId, SQUAD_LEADER_ROLE.roleId)
+  LoadoutManager.initNPC(entityId, SQUAD_LEADER_ROLE.roleId, event.npc)
   LLM_LOG("Squad Leader '" + npcName + "' (" + entityId + ") initialised.")
 }
 
-// interact() — fires on player right-click OR when the player sends a message
-// through the CNPC dialog.
-//   event.npc         — the NPC Java entity
-//   event.player      — the player Java entity
-//   event.message     — player's typed message ("" on plain right-click)
 function interact(event) {
-  var entityId  = String(event.npc.getUniqueID())
+  var entityId  = String(event.npc.getUUID())
   var npcName   = String(event.npc.getName())
   var playerMsg = event.message ? String(event.message) : ""
 
-  // ── Build game-state context from CNPC / Minecraft API ───────────────────
-  var loadoutEquip = LoadoutManager.toEquipmentArray(entityId)
+  // ── Detect formation commands from the player ─────────────────────────────
+  var formationType = _detectFormationCommand(playerMsg)
+  if (formationType) {
+    TACZConnector.setFormation(entityId, formationType)
+    TACZConnector.updateFormation(entityId, event.npc)
+    LLM_LOG("Squad Leader: formation changed to " + formationType)
+  }
+
+  var loadoutEquip = LoadoutManager.toEquipmentArray(entityId, event.npc)
 
   var rawNPC = {
     name:        npcName,
     health:      event.npc.getHealth(),
     maxHealth:   event.npc.getMaxHealth(),
-    equipment:   (loadoutEquip.length > 0) ? loadoutEquip : [],
+    equipment:   loadoutEquip,
     currentTask: SQUAD_LEADER_ROLE.defaultTask
   }
 
@@ -82,17 +92,16 @@ function interact(event) {
     heldItem:  _getHeldItemName(event.player)
   }
 
-  var rawWorld  = _getWorldData(event.npc)
-  var rawNearby = _getNearbyData(event.npc)
-
   var context = ContextBuilder.build({
     npcData:    rawNPC,
     playerData: rawPlayer,
-    worldData:  rawWorld,
-    nearbyData: rawNearby
+    worldData:  _getWorldData(event.npc),
+    nearbyData: _getNearbyData(event.npc)
   })
 
-  // ── Forward to connector using the role-driven path ───────────────────────
+  // Include current formation in context for the AI prompt
+  context.formation = FormationManager.getFormation(entityId)
+
   TACZConnector.handleRoleInteraction(
     SQUAD_LEADER_ROLE,
     entityId,
@@ -109,35 +118,52 @@ function interact(event) {
   )
 }
 
-// removed() — fires when the NPC dies, despawns, or is unloaded from the world.
-// Cleans up session data so stale state doesn't bleed into a respawned NPC.
 function removed(event) {
-  var entityId = String(event.npc.getUniqueID())
+  var entityId = String(event.npc.getUUID())
+  LoadoutManager.saveStateOnRemoval(entityId, event.npc)
   TACZConnector.onNPCRemoved(entityId)
-  LLM_LOG("Squad Leader '" + String(event.npc.getName()) + "' removed — session cleared.")
+  LLM_LOG("Squad Leader '" + String(event.npc.getName()) + "' removed — state preserved.")
+}
+
+function died(event) {
+  var entityId = String(event.npc.getUUID())
+  TACZConnector.onLeaderDied(entityId)
+  LLM_LOG("Squad Leader '" + String(event.npc.getName()) + "' died — squad disbanded.")
 }
 
 // ── Private helpers ───────────────────────────────────────────────────────────
 
+// Detect a formation keyword in the player's message.
+// Uses word-boundary regex to avoid false positives
+// (e.g. "decline" must not match "line", "wedge-shaped" is fine).
+// Returns the formation type string, or null if none found.
+function _detectFormationCommand(msg) {
+  if (!msg) { return null }
+  var lower = String(msg).toLowerCase()
+  if (/\bcolumn\b/.test(lower))            { return "column" }
+  if (/\bwedge\b/.test(lower))             { return "wedge" }
+  if (/\bline\b/.test(lower))              { return "line" }
+  if (/\bdefend\b|\bdefense\b/.test(lower)) { return "defend" }
+  if (/\bcircle\b/.test(lower))            { return "defend" }
+  return null
+}
+
 function _getHeldItemName(player) {
   try {
-    var stack = player.getHeldItem ? player.getHeldItem() : null
-    if (stack && !stack.func_190926_b()) return String(stack.getDisplayName())
+    var stack = player.getMainhandItem ? player.getMainhandItem() : null
+    if (stack && !stack.isEmpty()) { return String(stack.getDisplayName()) }
   } catch (e) { /* ignore */ }
   return "nothing"
 }
 
 function _getWorldData(npc) {
   try {
-    var w = npc.getEntityWorld ? npc.getEntityWorld() : null
-    if (!w) return {"time": "unknown", "weather": "clear", "biome": "unknown"}
-    var ticks   = w.getTotalWorldTime ? w.getTotalWorldTime() : 0
-    var weather = w.isThundering() ? "storm" : (w.isRaining() ? "rain" : "clear")
+    var w = npc.getWorld ? npc.getWorld() : null
+    if (!w) { return {"time": "unknown", "weather": "clear", "biome": "unknown"} }
+    var ticks   = w.getTime ? w.getTime() : 0
+    var weather = w.isRaining ? (w.isRaining() ? "rain" : "clear") : "clear"
     var biome   = "unknown"
-    try {
-      var bp = npc.getPosition ? npc.getPosition() : null
-      if (bp) biome = String(w.getBiome(bp).getBiomeName())
-    } catch(e2) { /* ignore */ }
+    try { biome = String(w.getBiomeName(npc.getBlockX(), npc.getBlockZ())) } catch(e2) { /* ignore */ }
     return {"time": ticks, "weather": weather, "biome": biome}
   } catch (e) {
     return {"time": "unknown", "weather": "clear", "biome": "unknown"}
@@ -145,7 +171,5 @@ function _getWorldData(npc) {
 }
 
 function _getNearbyData(npc) {
-  // Basic scan — extend with actual entity list from CNPC API as needed.
-  // Returning empty arrays is safe; the AI will note "no contacts".
   return {"hostiles": [], "friendlies": []}
 }

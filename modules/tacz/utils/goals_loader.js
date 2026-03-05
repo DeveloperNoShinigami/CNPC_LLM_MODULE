@@ -1,59 +1,76 @@
-// modules/tacz/utils/goals_loader.js — AI Task / Goal Set Loader for TACZ NPCs.
+// modules/tacz/utils/goals_loader.js — AI Task / Goal Set Loader
 //
 // CNPC ES5 Scripting Standard — Rhino JavaScript Engine
 //
-// Loads goal definitions from the TACZ config and provides helpers for
-// resolving which goal set applies to a given NPC role.
+// Goals are now defined as individual self-registering files in ai_goals/.
+// Role scripts load only the goal files they need, then call setRoleGoals()
+// to declare which goals are active for their roleId.
 //
-// In a full CNPC implementation these goals would be passed to the CNPC AI
-// goal queue.  Here they serve as context enrichment strings that the brain
-// can reference when deciding NPC behaviour.
+// ── Pattern ──────────────────────────────────────────────────────────────────
+//   1. Role script loads goal files:
+//        load(LLM_BASE_PATH + "/modules/tacz/ai_goals/patrol.js")
+//        load(LLM_BASE_PATH + "/modules/tacz/ai_goals/hold_position.js")
+//      Each goal file calls GoalsLoader.registerGoal(name, description).
 //
-// Goals are defined in modules/tacz/tacz_config.json under each role:
-//   "rifleman": { "goals": ["patrol", "engage_hostiles", ...] }
+//   2. Role script declares which goals apply to its roleId:
+//        GoalsLoader.setRoleGoals("sniper", ["hold_position", "report_contacts"])
 //
-// Depends on: tacz_config (loaded as TACZConfig global, or provide configObj to init())
+//   3. TACZConnector calls GoalsLoader.formatForPrompt(roleId) to embed goals
+//      in the AI system prompt.
+//
+// ── Priority ─────────────────────────────────────────────────────────────────
+//   setRoleGoals() declarations (file-based) take precedence over
+//   tacz_config.json role.goals arrays (legacy / fallback).
 
 var GoalsLoader = (function() {
 
-  // Built-in goal descriptors.
-  var _goalDescriptors = {
-    "patrol":                  "Move along a predefined patrol route, staying alert for hostiles.",
-    "engage_hostiles":         "Attack any detected hostile entity within range.",
-    "follow_player_on_order":  "Follow the player when ordered to do so.",
-    "hold_position":           "Stay at the current location and do not advance.",
-    "engage_priority_targets": "Identify and eliminate the highest-threat target first.",
-    "report_contacts":         "Verbally report when new entities are detected nearby.",
-    "suppress_hostiles":       "Lay down suppressive fire to pin down enemies.",
-    "resupply_allies":         "Distribute ammunition and supplies to nearby friendly NPCs.",
-    "secure_area":             "Clear and hold the immediate area of all hostile entities.",
-    "coordinate_squad":        "Issue tactical orders to nearby friendly NPCs and keep the unit cohesive."
-  }
+  // name → description string.  Populated by registerGoal() calls (from ai_goals/*.js).
+  var _goalDescriptors = {}
+
+  // roleId → string[]  Declared by setRoleGoals() in role scripts.
+  var _roleGoals = {}
 
   var _config = null
 
   return {
 
-    // Provide the parsed tacz_config object.
-    // Call this once after loading tacz_config.json.
+    // Provide the parsed tacz_config object (called by TACZConnector.init()).
+    // Still used as fallback when a role has not called setRoleGoals().
     init: function(configObj) {
       _config = configObj
     },
 
-    // Get the list of goal names for a given NPC role.
+    // Register a goal descriptor.
+    // Called automatically by ai_goals/*.js files when they are load()-ed.
+    registerGoal: function(name, descriptor) {
+      _goalDescriptors[name] = descriptor
+    },
+
+    // Declare which goals are active for a roleId.
+    // Called by role scripts after they have loaded their ai_goals files.
+    // This takes priority over tacz_config.json for that roleId.
+    setRoleGoals: function(roleId, goalNames) {
+      _roleGoals[roleId] = goalNames || []
+    },
+
+    // Get the list of goal names for a role.
+    // Prefers setRoleGoals() declarations; falls back to tacz_config.json.
     getGoalNames: function(role) {
+      if (_roleGoals[role]) return _roleGoals[role]
       if (!_config || !_config.roles || !_config.roles[role]) return []
       return _config.roles[role].goals || []
     },
 
-    // Get full goal descriptors for a given NPC role.
+    // Get full goal descriptors for a role.
     // Returns an array of human-readable strings for inclusion in a system prompt.
     getGoalDescriptors: function(role) {
       var names = GoalsLoader.getGoalNames(role)
       var results = []
       for (var i = 0; i < names.length; i++) {
         var desc = _goalDescriptors[names[i]]
-        results.push(desc ? "[" + names[i] + "] " + desc : "[" + names[i] + "] (no descriptor available)")
+        results.push(desc
+          ? "[" + names[i] + "] " + desc
+          : "[" + names[i] + "] (no descriptor — load the goal file in the role script)")
       }
       return results
     },
@@ -65,15 +82,14 @@ var GoalsLoader = (function() {
       return descriptors.join("\n")
     },
 
-    // Register a custom goal descriptor.
-    // Use this to extend the built-in goal set without modifying this file.
-    registerGoal: function(name, descriptor) {
-      _goalDescriptors[name] = descriptor
-    },
-
-    // List all registered goal names.
+    // List all registered goal names (across all loaded goal files).
     listGoals: function() {
       return Object.keys(_goalDescriptors)
+    },
+
+    // List all roles that have called setRoleGoals().
+    listRolesWithGoals: function() {
+      return Object.keys(_roleGoals)
     }
 
   }
