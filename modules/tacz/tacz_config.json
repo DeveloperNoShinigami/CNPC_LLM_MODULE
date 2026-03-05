@@ -1,0 +1,32 @@
+{
+  "module": "tacz",
+  "description": "Timeless and Classics Zero (TACZ) — Brain mapping and role definitions.",
+
+  "default_brain_provider": "gemini",
+
+  "roles": {
+    "rifleman": {
+      "description": "Standard infantry soldier. Engages targets at medium range.",
+      "brain_provider": "gemini",
+      "goals": ["patrol", "engage_hostiles", "follow_player_on_order"]
+    },
+    "sniper": {
+      "description": "Long-range specialist. Holds position and eliminates priority targets.",
+      "brain_provider": "gemini",
+      "goals": ["hold_position", "engage_priority_targets", "report_contacts"]
+    },
+    "support": {
+      "description": "Heavy weapons or logistics. Suppresses enemies and resupplies allies.",
+      "brain_provider": "gemini",
+      "goals": ["suppress_hostiles", "resupply_allies", "secure_area"]
+    }
+  },
+
+  "npc_assignments": {
+    "_comment": "Maps NPC entity IDs to roles. Edit this section to assign roles to specific NPCs.",
+    "_example": {
+      "npc_entity_123": { "role": "rifleman", "name": "Alpha" },
+      "npc_entity_456": { "role": "sniper",   "name": "Ghost" }
+    }
+  }
+}
