@@ -85,16 +85,18 @@ function timer(event) {
 // interact() — fires on player right-click or CNPC dialog message.
 function interact(event) {
   // ── Ammo hand-off: player right-clicks while holding ammo ─────────────────
-  var heldItem = event.player.getMainhandItem ? event.player.getMainhandItem() : null
-  if (heldItem && !heldItem.isEmpty()) {
-    if (TimelessAPI.getOptionalAmmo(heldItem) != null) {
-      var given = TACZConnector.onAmmoGiven(String(event.npc.getUUID()), event.npc, heldItem, event.player)
-      if (given) {
-        event.npc.say("Thanks. Reloading now.")
-        return
+  try {
+    var heldItem = event.player.getMainhandItem ? event.player.getMainhandItem() : null
+    if (heldItem && !heldItem.isEmpty()) {
+      if (TimelessAPI.getOptionalAmmo(heldItem) != null) {
+        var given = TACZConnector.onAmmoGiven(String(event.npc.getUUID()), event.npc, heldItem, event.player)
+        if (given) {
+          event.npc.say("Thanks. Reloading now.")
+          return
+        }
       }
     }
-  }
+  } catch (ammoErr) { /* TimelessAPI unavailable or item check failed — fall through to dialog */ }
 
   var entityId  = String(event.npc.getUUID())
   var npcName   = String(event.npc.getName())

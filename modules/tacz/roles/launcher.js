@@ -60,13 +60,15 @@ function timer(event) {
 }
 
 function interact(event) {
-  var heldItem = event.player.getMainhandItem ? event.player.getMainhandItem() : null
-  if (heldItem && !heldItem.isEmpty()) {
-    if (TimelessAPI.getOptionalAmmo(heldItem) != null) {
-      var given = TACZConnector.onAmmoGiven(String(event.npc.getUUID()), event.npc, heldItem, event.player)
-      if (given) { event.npc.say("Good. Racking up now."); return }
+  try {
+    var heldItem = event.player.getMainhandItem ? event.player.getMainhandItem() : null
+    if (heldItem && !heldItem.isEmpty()) {
+      if (TimelessAPI.getOptionalAmmo(heldItem) != null) {
+        var given = TACZConnector.onAmmoGiven(String(event.npc.getUUID()), event.npc, heldItem, event.player)
+        if (given) { event.npc.say("Good. Racking up now."); return }
+      }
     }
-  }
+  } catch (ammoErr) { /* TimelessAPI unavailable — fall through to dialog */ }
 
   var entityId  = String(event.npc.getUUID())
   var npcName   = String(event.npc.getName())

@@ -108,13 +108,15 @@ function interact(event) {
   var playerMsg = event.message ? String(event.message) : ""
 
   // ── Ammo hand-off: player right-clicks while holding ammo ─────────────────
-  var heldItem = event.player.getMainhandItem ? event.player.getMainhandItem() : null
-  if (heldItem && !heldItem.isEmpty()) {
-    if (TimelessAPI.getOptionalAmmo(heldItem) != null) {
-      var given = TACZConnector.onAmmoGiven(entityId, event.npc, heldItem, event.player)
-      if (given) { event.npc.say("Got it. Topping off now."); return }
+  try {
+    var heldItem = event.player.getMainhandItem ? event.player.getMainhandItem() : null
+    if (heldItem && !heldItem.isEmpty()) {
+      if (TimelessAPI.getOptionalAmmo(heldItem) != null) {
+        var given = TACZConnector.onAmmoGiven(entityId, event.npc, heldItem, event.player)
+        if (given) { event.npc.say("Got it. Topping off now."); return }
+      }
     }
-  }
+  } catch (ammoErr) { /* TimelessAPI unavailable — fall through to dialog */ }
 
   // ── Track player master via NBT (first interaction registers the player) ───
   _recordMaster(event.npc, event.player)
