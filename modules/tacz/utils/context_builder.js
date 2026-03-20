@@ -1,150 +1,160 @@
-/**
- * modules/tacz/utils/context_builder.js
- *
- * Utility: Game-State Context Builder for TACZ NPCs.
- *
- * Scrapes the current game state and assembles it into a standardised context
- * object that every model_brain.js `buildSystemPrompt()` function understands.
- *
- * In a real Minecraft environment this module would call the CNPC scripting API,
- * the TACZ API, and vanilla Minecraft accessors.  The `build()` function accepts
- * those raw API data objects and normalises them into the shared context schema.
- *
- * ─────────────────────────────────────────────────────────────
- * CONTEXT SCHEMA
- * ─────────────────────────────────────────────────────────────
- * {
- *   npc: {
- *     name        : string,
- *     health      : number,
- *     maxHealth   : number,
- *     equipment   : string[],   // weapons, armour, items the NPC carries
- *     currentTask : string,
- *   },
- *   player: {
- *     name     : string,
- *     health   : number,
- *     maxHealth: number,
- *     heldItem : string,
- *   },
- *   world: {
- *     time   : string,   // e.g. "Day (06:00)", "Night (22:00)"
- *     weather: string,   // "clear", "rain", "storm"
- *     biome  : string,   // e.g. "plains", "forest", "desert"
- *   },
- *   nearby: {
- *     hostiles  : [{type: string, distance: number}],
- *     friendlies: [{type: string, distance: number}],
- *   }
- * }
- */
+// modules/tacz/utils/context_builder.js — Game-State Context Builder for TACZ NPCs.
+//
+// CNPC ES5 Scripting Standard — Rhino JavaScript Engine
+//
+// Scrapes the current game state and assembles it into a standardised context
+// object that every model_brain.js buildSystemPrompt() function understands.
+//
+// In a real Minecraft environment this module calls the CNPC scripting API,
+// the TACZ API, and vanilla Minecraft accessors.  The build() function accepts
+// those raw API data objects and normalises them into the shared context schema.
+//
+// CONTEXT SCHEMA
+//   {
+//     npc: {
+//       name        : string,
+//       health      : number,
+//       maxHealth   : number,
+//       equipment   : string[],   // weapons, armour, items the NPC carries
+//       currentTask : string,
+//     },
+//     player: {
+//       name     : string,
+//       health   : number,
+//       maxHealth: number,
+//       heldItem : string,
+//     },
+//     world: {
+//       time   : string,   // e.g. "Day (06:00 AM)"
+//       weather: string,   // "clear", "rain", "storm"
+//       biome  : string,
+//     },
+//     nearby: {
+//       hostiles  : [{type: string, distance: number}],
+//       friendlies: [{type: string, distance: number}],
+//     }
+//   }
 
-'use strict';
+var ContextBuilder = (function() {
 
-const ContextBuilder = {
+  // ── NPC context ────────────────────────────────────────────────────────────
 
-  /**
-   * Build a full game-state context object from raw API data.
-   *
-   * @param {object} opts
-   * @param {object} opts.npcData     - Raw NPC data from the CNPC API
-   * @param {object} opts.playerData  - Raw player data
-   * @param {object} opts.worldData   - Raw world/environment data
-   * @param {object} opts.nearbyData  - Raw nearby-entity data
-   * @returns {object}                - Normalised context object
-   */
-  build({ npcData = {}, playerData = {}, worldData = {}, nearbyData = {} } = {}) {
+  function _buildNPCContext(raw) {
     return {
-      npc:    _buildNPCContext(npcData),
-      player: _buildPlayerContext(playerData),
-      world:  _buildWorldContext(worldData),
-      nearby: _buildNearbyContext(nearbyData),
-    };
-  },
+      name:        raw.name        || "Soldier",
+      health:      (raw.health      !== undefined) ? raw.health      : 20,
+      maxHealth:   (raw.maxHealth   !== undefined) ? raw.maxHealth   : 20,
+      equipment:   Array.isArray(raw.equipment) ? raw.equipment : _parseEquipment(raw.equipment),
+      currentTask: raw.currentTask || raw.task || "standing by"
+    }
+  }
 
-  /**
-   * Build a minimal context for testing or when full data is unavailable.
-   *
-   * @param {string} npcName
-   * @param {string} playerName
-   * @returns {object}
-   */
-  buildMinimal(npcName = 'Soldier', playerName = 'Player') {
+  // ── Player context ─────────────────────────────────────────────────────────
+
+  function _buildPlayerContext(raw) {
     return {
-      npc:    { name: npcName,   health: 20, maxHealth: 20, equipment: [], currentTask: 'standing by' },
-      player: { name: playerName, health: 20, maxHealth: 20, heldItem: 'nothing' },
-      world:  { time: 'unknown', weather: 'clear', biome: 'unknown' },
-      nearby: { hostiles: [], friendlies: [] },
-    };
-  },
-};
+      name:      raw.name      || raw.username || "Player",
+      health:    (raw.health    !== undefined) ? raw.health    : 20,
+      maxHealth: (raw.maxHealth !== undefined) ? raw.maxHealth : 20,
+      heldItem:  raw.heldItem  || raw.mainHand || "nothing"
+    }
+  }
 
-// ── Private normalisation helpers ─────────────────────────────────────────────
+  // ── World context ──────────────────────────────────────────────────────────
 
-function _buildNPCContext(raw) {
-  return {
-    name:        raw.name        || 'Soldier',
-    health:      raw.health      ?? 20,
-    maxHealth:   raw.maxHealth   ?? 20,
-    equipment:   Array.isArray(raw.equipment) ? raw.equipment : _parseEquipment(raw.equipment),
-    currentTask: raw.currentTask || raw.task || 'standing by',
-  };
-}
+  function _buildWorldContext(raw) {
+    return {
+      time:    _formatTime(raw.time !== undefined ? raw.time : raw.dayTime),
+      weather: _formatWeather(raw.weather !== undefined ? raw.weather : raw.isRaining, raw.isThundering),
+      biome:   raw.biome || raw.biomeName || "unknown"
+    }
+  }
 
-function _buildPlayerContext(raw) {
-  return {
-    name:      raw.name      || raw.username || 'Player',
-    health:    raw.health    ?? 20,
-    maxHealth: raw.maxHealth ?? 20,
-    heldItem:  raw.heldItem  || raw.mainHand || 'nothing',
-  };
-}
+  // ── Nearby entities context ────────────────────────────────────────────────
 
-function _buildWorldContext(raw) {
-  return {
-    time:    _formatTime(raw.time ?? raw.dayTime),
-    weather: _formatWeather(raw.weather ?? raw.isRaining, raw.isThundering),
-    biome:   raw.biome || raw.biomeName || 'unknown',
-  };
-}
+  function _buildNearbyContext(raw) {
+    var hostiles   = raw.hostiles   || []
+    var friendlies = raw.friendlies || []
+    var result = {hostiles: [], friendlies: []}
+    for (var i = 0; i < hostiles.length;   i++) result.hostiles.push(_normaliseEntity(hostiles[i]))
+    for (var j = 0; j < friendlies.length; j++) result.friendlies.push(_normaliseEntity(friendlies[j]))
+    return result
+  }
 
-function _buildNearbyContext(raw) {
-  const hostiles   = (raw.hostiles   || []).map(_normaliseEntity);
-  const friendlies = (raw.friendlies || []).map(_normaliseEntity);
-  return { hostiles, friendlies };
-}
+  function _normaliseEntity(e) {
+    if (typeof e === "string") return {"type": e, "distance": null}
+    return {
+      "type":     e.type || e.entityType || "unknown",
+      "distance": (e.distance !== undefined && e.distance !== null) ? Math.round(e.distance) : null
+    }
+  }
 
-function _normaliseEntity(e) {
-  if (typeof e === 'string') return { type: e, distance: null };
-  return {
-    type:     e.type || e.entityType || 'unknown',
-    distance: e.distance != null ? Math.round(e.distance) : null,
-  };
-}
-
-function _formatTime(dayTime) {
-  if (dayTime == null || dayTime === undefined) return 'unknown';
-  if (typeof dayTime === 'string') return dayTime;
+  // ── Time formatter (Minecraft ticks → human-readable) ─────────────────────
   // Minecraft ticks: 0 = 06:00, 6000 = 12:00, 12000 = 18:00, 18000 = 00:00
-  const totalMinutes = Math.floor(((dayTime + 6000) % 24000) / 1000 * 60);
-  const h = Math.floor(totalMinutes / 60) % 24;
-  const m = totalMinutes % 60;
-  const period = h < 12 ? 'AM' : 'PM';
-  const h12 = h % 12 === 0 ? 12 : h % 12;
-  const label = h >= 6 && h < 20 ? 'Day' : 'Night';
-  return `${label} (${String(h12).padStart(2, '0')}:${String(m).padStart(2, '0')} ${period})`;
-}
 
-function _formatWeather(isRaining, isThundering) {
-  if (isThundering) return 'storm';
-  if (isRaining)    return 'rain';
-  return 'clear';
-}
+  function _formatTime(dayTime) {
+    if (dayTime === undefined || dayTime === null) return "unknown"
+    if (typeof dayTime === "string") return dayTime
+    var totalMinutes = Math.floor(((dayTime + 6000) % 24000) / 1000 * 60)
+    var h = Math.floor(totalMinutes / 60) % 24
+    var m = totalMinutes % 60
+    var period = (h < 12) ? "AM" : "PM"
+    var h12 = (h % 12 === 0) ? 12 : (h % 12)
+    var label = (h >= 6 && h < 20) ? "Day" : "Night"
+    var hStr = h12 < 10 ? "0" + h12 : "" + h12
+    var mStr = m   < 10 ? "0" + m   : "" + m
+    return label + " (" + hStr + ":" + mStr + " " + period + ")"
+  }
 
-function _parseEquipment(equipment) {
-  if (!equipment) return [];
-  if (typeof equipment === 'string') return equipment.split(',').map(s => s.trim()).filter(Boolean);
-  return [];
-}
+  function _formatWeather(isRaining, isThundering) {
+    if (isThundering) return "storm"
+    if (isRaining)    return "rain"
+    return "clear"
+  }
 
-module.exports = ContextBuilder;
+  function _parseEquipment(equipment) {
+    if (!equipment) return []
+    if (typeof equipment === "string") {
+      var parts = equipment.split(",")
+      var result = []
+      for (var i = 0; i < parts.length; i++) {
+        var s = parts[i].trim()
+        if (s) result.push(s)
+      }
+      return result
+    }
+    return []
+  }
+
+  // ── Public API ─────────────────────────────────────────────────────────────
+
+  return {
+
+    // Build a full game-state context object from raw API data.
+    build: function(opts) {
+      var npcData    = (opts && opts.npcData)    || {}
+      var playerData = (opts && opts.playerData) || {}
+      var worldData  = (opts && opts.worldData)  || {}
+      var nearbyData = (opts && opts.nearbyData) || {}
+      return {
+        npc:    _buildNPCContext(npcData),
+        player: _buildPlayerContext(playerData),
+        world:  _buildWorldContext(worldData),
+        nearby: _buildNearbyContext(nearbyData)
+      }
+    },
+
+    // Build a minimal context for testing or when full data is unavailable.
+    buildMinimal: function(npcName, playerName) {
+      return {
+        npc:    {"name": npcName || "Soldier",  "health": 20, "maxHealth": 20, "equipment": [], "currentTask": "standing by"},
+        player: {"name": playerName || "Player", "health": 20, "maxHealth": 20, "heldItem": "nothing"},
+        world:  {"time": "unknown", "weather": "clear", "biome": "unknown"},
+        nearby: {"hostiles": [], "friendlies": []}
+      }
+    }
+
+  }
+
+})()
+

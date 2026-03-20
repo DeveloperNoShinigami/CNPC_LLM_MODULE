@@ -1,30 +1,38 @@
-// core/gemini_brain.js — Module-agnostic wrapper for the Google Gemini API
+// core/openrouter_brain.js — Wrapper for the OpenRouter API
 //
 // CNPC ES5 Scripting Standard — Rhino JavaScript Engine
 // Uses Java HTTP for API calls and java.lang.Thread for async execution.
 //
+// OpenRouter proxies many models (GPT-4o, Claude, Mistral, Llama, etc.)
+// through a single OpenAI-compatible endpoint.
+//
 // SETUP:
-//   Set your Gemini API key in core/master_config.json under
-//   brain_providers.gemini.api_key before enabling this brain.
+//   Set your OpenRouter API key in core/master_config.json under
+//   brain_providers.openrouter.api_key, then pick a model string
+//   from https://openrouter.ai/models (e.g. "openai/gpt-4o-mini").
 //
 // USAGE:
 //   Load this file before brain_factory.js.
-//   GeminiBrain.create(config) returns a brain instance with:
+//   OpenRouterBrain.create(config) returns a brain instance with:
 //     brain.think(systemPrompt, userMessage, callback)
 //     brain.thinkWithHistory(systemPrompt, history, userMessage, callback)
 //   Callbacks receive (errorMsg, responseText).
 
-var GeminiBrain = (function() {
+var OpenRouterBrain = (function() {
 
-  var ENDPOINT_BASE = "https://generativelanguage.googleapis.com/v1beta/models/"
+  var ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
+  var REFERER   = "https://github.com/DeveloperNoShinigami/CNPC_LLM_MODULE"
 
   // ── HTTP helper ─────────────────────────────────────────────────────────────
 
-  function _httpPost(urlString, jsonBody) {
+  function _httpPost(urlString, jsonBody, apiKey) {
     var urlObj = new java.net.URL(urlString)
     var conn = urlObj.openConnection()
     conn.setRequestMethod("POST")
     conn.setRequestProperty("Content-Type", "application/json; charset=UTF-8")
+    conn.setRequestProperty("Authorization", "Bearer " + apiKey)
+    conn.setRequestProperty("HTTP-Referer", REFERER)
+    conn.setRequestProperty("X-Title", "CNPC_LLM_MODULE")
     conn.setDoOutput(true)
     conn.setConnectTimeout(15000)
     conn.setReadTimeout(30000)
@@ -50,54 +58,52 @@ var GeminiBrain = (function() {
     conn.disconnect()
 
     if (responseCode < 200 || responseCode >= 300) {
-      throw new Error("Gemini HTTP " + responseCode + ": " + sb.toString())
+      throw new Error("OpenRouter HTTP " + responseCode + ": " + sb.toString())
     }
     return sb.toString()
   }
 
   // ── Request builder ─────────────────────────────────────────────────────────
+  // Converts Gemini-format history {role, parts:[{text}]} to OpenAI message format.
 
-  function _buildRequestBody(systemPrompt, messages, temperature, maxTokens) {
-    var contents = []
-    for (var i = 0; i < messages.length; i++) {
-      contents.push({
-        "role": messages[i].role,
-        "parts": [{"text": messages[i].text}]
-      })
+  function _buildRequestBody(modelName, systemPrompt, history, userMessage, temperature, maxTokens) {
+    var messages = [{"role": "system", "content": systemPrompt}]
+    for (var i = 0; i < history.length; i++) {
+      var turn = history[i]
+      var role = (turn.role === "model") ? "assistant" : turn.role
+      messages.push({"role": role, "content": turn.parts[0].text})
     }
+    messages.push({"role": "user", "content": "[Player]: " + userMessage})
     return JSON.stringify({
-      "system_instruction": {"parts": [{"text": systemPrompt}]},
-      "contents": contents,
-      "generationConfig": {
-        "temperature": temperature,
-        "maxOutputTokens": maxTokens
-      }
+      "model": modelName,
+      "messages": messages,
+      "temperature": temperature,
+      "max_tokens": maxTokens
     })
   }
 
   // ── Brain instance constructor ───────────────────────────────────────────────
 
-  function GeminiBrainInstance(config) {
+  function OpenRouterBrainInstance(config) {
     this.apiKey = config.api_key || ""
-    this.modelName = config.model || "gemini-1.5-flash"
+    this.modelName = config.model || "openai/gpt-4o-mini"
     this.temperature = (config.temperature !== undefined) ? config.temperature : 0.85
-    this.maxOutputTokens = config.max_output_tokens || 512
+    this.maxTokens = config.max_tokens || 512
   }
 
   // ── think(systemPrompt, userMessage, callback) ───────────────────────────────
-  // Single-turn: sends systemPrompt + userMessage, returns response via callback.
 
-  GeminiBrainInstance.prototype.think = function(systemPrompt, userMessage, callback) {
+  OpenRouterBrainInstance.prototype.think = function(systemPrompt, userMessage, callback) {
     var self = this
     var thread = new java.lang.Thread(new java.lang.Runnable({
       run: function() {
         try {
-          var url = ENDPOINT_BASE + self.modelName + ":generateContent?key=" + self.apiKey
-          var messages = [{"role": "user", "text": "[Player]: " + userMessage}]
-          var body = _buildRequestBody(systemPrompt, messages, self.temperature, self.maxOutputTokens)
-          var raw = _httpPost(url, body)
+          var body = _buildRequestBody(
+            self.modelName, systemPrompt, [], userMessage, self.temperature, self.maxTokens
+          )
+          var raw = _httpPost(ENDPOINT, body, self.apiKey)
           var parsed = JSON.parse(raw)
-          var text = parsed.candidates[0].content.parts[0].text
+          var text = parsed.choices[0].message.content
           callback(null, text.trim())
         } catch (e) {
           callback(String(e), null)
@@ -109,25 +115,18 @@ var GeminiBrain = (function() {
   }
 
   // ── thinkWithHistory(systemPrompt, history, userMessage, callback) ───────────
-  // Multi-turn: includes prior conversation turns for context.
-  // history is an array of {role, parts: [{text}]} objects (Gemini format).
 
-  GeminiBrainInstance.prototype.thinkWithHistory = function(systemPrompt, history, userMessage, callback) {
+  OpenRouterBrainInstance.prototype.thinkWithHistory = function(systemPrompt, history, userMessage, callback) {
     var self = this
     var thread = new java.lang.Thread(new java.lang.Runnable({
       run: function() {
         try {
-          var url = ENDPOINT_BASE + self.modelName + ":generateContent?key=" + self.apiKey
-          var messages = []
-          for (var i = 0; i < history.length; i++) {
-            var turn = history[i]
-            messages.push({"role": turn.role, "text": turn.parts[0].text})
-          }
-          messages.push({"role": "user", "text": "[Player]: " + userMessage})
-          var body = _buildRequestBody(systemPrompt, messages, self.temperature, self.maxOutputTokens)
-          var raw = _httpPost(url, body)
+          var body = _buildRequestBody(
+            self.modelName, systemPrompt, history, userMessage, self.temperature, self.maxTokens
+          )
+          var raw = _httpPost(ENDPOINT, body, self.apiKey)
           var parsed = JSON.parse(raw)
-          var text = parsed.candidates[0].content.parts[0].text
+          var text = parsed.choices[0].message.content
           callback(null, text.trim())
         } catch (e) {
           callback(String(e), null)
@@ -143,11 +142,10 @@ var GeminiBrain = (function() {
   return {
     create: function(config) {
       if (!config.api_key) {
-        throw new Error("GeminiBrain: missing api_key in config.")
+        throw new Error("OpenRouterBrain: missing api_key in config.")
       }
-      return new GeminiBrainInstance(config)
+      return new OpenRouterBrainInstance(config)
     }
   }
 
 })()
-

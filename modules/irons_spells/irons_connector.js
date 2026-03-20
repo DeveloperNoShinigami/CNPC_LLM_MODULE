@@ -1,16 +1,17 @@
-// modules/epic_fight/epic_fight_connector.js — Epic Fight Module Connector (SHELL)
+// modules/irons_spells/irons_connector.js — Iron's Spells 'n' Spellbooks Connector (SHELL)
 //
 // CNPC ES5 Scripting Standard — Rhino JavaScript Engine
 //
-// Minimal shell connector for the Epic Fight mod integration.
-// Follows the same connector contract as tacz_connector.js and can be
-// expanded by third-party developers to add full Epic Fight NPC support.
+// Minimal shell connector for the Iron's Spells 'n' Spellbooks mod integration.
+// Follows the same connector contract as tacz_connector.js and can be expanded
+// by developers to add full Iron's Spells NPC support.
 //
 // TO FULLY IMPLEMENT THIS MODULE:
-//   1. Fill in onNPCInteract with Epic Fight / CNPC API calls.
-//   2. Add a utils/ subfolder with context_builder, loadout_manager, etc.
-//   3. Ensure core/ef_models/gemini/model_brain.js is loaded (already exists).
-//   4. Set "enabled": true for epic_fight in core/master_config.json.
+//   1. Fill in onNPCInteract with Iron's Spells / CNPC API calls to read
+//      active spells, mana, and spell-school from the NPC's spellbook.
+//   2. Add a utils/ subfolder (context_builder, spell_manager, etc.).
+//   3. Ensure core/irons_models/gemini/model_brain.js is loaded (already exists).
+//   4. Set "enabled": true for irons_spells in core/master_config.json.
 //
 // CONNECTOR CONTRACT — every connector must implement:
 //   init(configPath)               — Load config; call once at startup.
@@ -19,7 +20,7 @@
 //
 // Depends on: AIManager (must be loaded before this file)
 
-var EpicFightConnector = (function() {
+var IronsSpellsConnector = (function() {
 
   var _config = null
 
@@ -28,7 +29,7 @@ var EpicFightConnector = (function() {
   function _loadConfig(configPath) {
     var file = new java.io.File(configPath)
     if (!file.exists()) {
-      throw new Error("EpicFightConnector: epic_fight_config.json not found at: " + configPath)
+      throw new Error("IronsSpellsConnector: irons_config.json not found at: " + configPath)
     }
     var reader = new java.io.BufferedReader(new java.io.FileReader(file))
     var sb = new java.lang.StringBuilder()
@@ -45,7 +46,7 @@ var EpicFightConnector = (function() {
   function _resolveProvider(entityId) {
     var assignments = _config.npc_assignments || {}
     if (assignments[entityId]) {
-      var role = assignments[entityId].role || "warrior"
+      var role = assignments[entityId].role || "arcanist"
       var roleConfig = (_config.roles && _config.roles[role]) ? _config.roles[role] : {}
       return roleConfig.brain_provider || _config.default_brain_provider || "gemini"
     }
@@ -57,20 +58,22 @@ var EpicFightConnector = (function() {
   return {
 
     // Initialise the connector.
-    // configPath: absolute path to modules/epic_fight/epic_fight_config.json
+    // configPath: absolute path to modules/irons_spells/irons_config.json
     init: function(configPath) {
       _config = _loadConfig(configPath)
-      LLM_LOG("EpicFightConnector: shell initialised. Implement onNPCInteract() to enable full functionality.")
+      LLM_LOG("IronsSpellsConnector: shell initialised. Implement onNPCInteract() to enable full functionality.")
     },
 
     // Handle an NPC interaction event.
-    // TODO: Replace the context stub below with real Epic Fight / CNPC API integration.
+    // TODO: Replace the context stub below with real Iron's Spells / CNPC API integration.
+    //       Read the NPC's active spells via the Iron's Spells API and populate
+    //       context.npc.equipment with the list of spell names.
     //
     // event fields: entityId, npcName, playerMsg, npcRawData, playerData, worldData, nearbyData
     // callback: function(errorMsg, responseText)
     onNPCInteract: function(event, callback) {
       var entityId   = event.entityId   || ""
-      var npcName    = event.npcName    || "Guardian"
+      var npcName    = event.npcName    || "Arcanist"
       var playerMsg  = event.playerMsg  || ""
       var npcRawData  = event.npcRawData  || {}
       var playerData  = event.playerData  || {}
@@ -79,14 +82,14 @@ var EpicFightConnector = (function() {
 
       var providerName = _resolveProvider(entityId)
 
-      // Build context (replace with full ContextBuilder when implementing)
+      // Build context (replace with full spell-aware ContextBuilder when implementing)
       var context = {
         npc: {
           name:        npcRawData.name        || npcName,
           health:      (npcRawData.health      !== undefined) ? npcRawData.health      : 20,
           maxHealth:   (npcRawData.maxHealth   !== undefined) ? npcRawData.maxHealth   : 20,
-          equipment:   npcRawData.equipment   || [],
-          currentTask: npcRawData.currentTask || "standing watch"
+          equipment:   npcRawData.equipment   || [],  // TODO: populate from Iron's Spells API
+          currentTask: npcRawData.currentTask || "studying the weave"
         },
         player: {
           name:      playerData.name      || "Player",
@@ -105,7 +108,7 @@ var EpicFightConnector = (function() {
         }
       }
 
-      AIManager.interact("epic_fight", entityId, providerName, context, playerMsg, callback)
+      AIManager.interact("irons_spells", entityId, providerName, context, playerMsg, callback)
     },
 
     // Clean up when an NPC leaves the world.
@@ -116,4 +119,3 @@ var EpicFightConnector = (function() {
   }
 
 })()
-

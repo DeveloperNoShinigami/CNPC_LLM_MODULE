@@ -1,32 +1,129 @@
 {
   "module": "tacz",
-  "description": "Timeless and Classics Zero (TACZ) — Brain mapping and role definitions.",
+  "description": "Timeless and Classics Zero (TACZ) — Brain mapping, role definitions, and default loadouts. Roles are managed here; NPC assignment is done by attaching the matching role script (modules/tacz/roles/<roleId>.js) directly to the NPC in CNPC.",
 
   "default_brain_provider": "gemini",
 
   "roles": {
+    "squad_leader": {
+      "description": "Commanding officer. Coordinates the squad, issues formation orders, and maintains tactical awareness.",
+      "brain_provider": "gemini",
+      "goals": ["patrol", "engage_hostiles", "report_contacts", "follow_player_on_order", "coordinate_squad", "maintain_formation"]
+    },
+    "soldier": {
+      "description": "Standard infantry. Executes orders from the squad leader or player. Engages threats on sight.",
+      "brain_provider": "gemini",
+      "goals": ["patrol", "engage_hostiles", "follow_player_on_order", "suppress_hostiles", "follow_leader_formation"]
+    },
+    "sniper": {
+      "description": "Long-range specialist. Holds overwatch position and eliminates priority targets with precision.",
+      "brain_provider": "gemini",
+      "goals": ["hold_position", "engage_priority_targets", "report_contacts", "follow_leader_formation"]
+    },
+    "medic": {
+      "description": "Field medic. Treats wounded allies and keeps the squad operational under fire.",
+      "brain_provider": "gemini",
+      "goals": ["treat_wounded", "follow_leader_formation", "follow_player_on_order", "engage_hostiles"]
+    },
+    "launcher": {
+      "description": "Heavy weapons specialist. Provides rocket and explosive fire support against hardened targets.",
+      "brain_provider": "gemini",
+      "goals": ["fire_support", "engage_priority_targets", "hold_position", "follow_leader_formation"]
+    },
+    "scout": {
+      "description": "Forward scout. Moves ahead of the squad to gather intel and mark enemy positions.",
+      "brain_provider": "gemini",
+      "goals": ["scout_area", "report_contacts", "follow_leader_formation", "engage_hostiles"]
+    },
     "rifleman": {
       "description": "Standard infantry soldier. Engages targets at medium range.",
       "brain_provider": "gemini",
-      "goals": ["patrol", "engage_hostiles", "follow_player_on_order"]
-    },
-    "sniper": {
-      "description": "Long-range specialist. Holds position and eliminates priority targets.",
-      "brain_provider": "gemini",
-      "goals": ["hold_position", "engage_priority_targets", "report_contacts"]
+      "goals": ["patrol", "engage_hostiles", "follow_player_on_order", "follow_leader_formation"]
     },
     "support": {
       "description": "Heavy weapons or logistics. Suppresses enemies and resupplies allies.",
       "brain_provider": "gemini",
-      "goals": ["suppress_hostiles", "resupply_allies", "secure_area"]
+      "goals": ["suppress_hostiles", "resupply_allies", "secure_area", "follow_leader_formation"]
     }
   },
 
-  "npc_assignments": {
-    "_comment": "Maps NPC entity IDs to roles. Edit this section to assign roles to specific NPCs.",
-    "_example": {
-      "npc_entity_123": { "role": "rifleman", "name": "Alpha" },
-      "npc_entity_456": { "role": "sniper",   "name": "Ghost" }
+  "loadouts_note": "Item IDs are for TACZ 1.20.1. Verify against your installed version. ammo_stack_size = stack count given in offhand/loot slots.",
+  "loadouts": {
+    "squad_leader": {
+      "primary":        "tacz:m4a1",
+      "primary_ammo":   "tacz:5_56x45mm",
+      "secondary":      "tacz:glock17",
+      "secondary_ammo": "tacz:9mm",
+      "melee":          "tacz:combat_knife",
+      "armour":         "minecraft:iron_chestplate",
+      "ammo_stack_size": 30
+    },
+    "soldier": {
+      "primary":        "tacz:ak47",
+      "primary_ammo":   "tacz:7_62x39mm",
+      "secondary":      "tacz:m1911",
+      "secondary_ammo": "tacz:45acp",
+      "melee":          "tacz:combat_knife",
+      "armour":         "minecraft:iron_chestplate",
+      "ammo_stack_size": 30
+    },
+    "sniper": {
+      "primary":        "tacz:svd",
+      "primary_ammo":   "tacz:7_62x54mm",
+      "secondary":      "tacz:glock17",
+      "secondary_ammo": "tacz:9mm",
+      "melee":          "tacz:combat_knife",
+      "armour":         null,
+      "ammo_stack_size": 10
+    },
+    "medic": {
+      "primary":        "tacz:mp5",
+      "primary_ammo":   "tacz:9mm",
+      "secondary":      "tacz:glock17",
+      "secondary_ammo": "tacz:9mm",
+      "melee":          "tacz:combat_knife",
+      "armour":         "minecraft:iron_chestplate",
+      "ammo_stack_size": 30
+    },
+    "launcher": {
+      "primary":        "tacz:rpg7",
+      "primary_ammo":   "tacz:rpg_rocket",
+      "secondary":      "tacz:ak47",
+      "secondary_ammo": "tacz:7_62x39mm",
+      "melee":          "tacz:combat_knife",
+      "armour":         "minecraft:iron_chestplate",
+      "ammo_stack_size": 5
+    },
+    "scout": {
+      "primary":        "tacz:mp5",
+      "primary_ammo":   "tacz:9mm",
+      "secondary":      "tacz:glock17",
+      "secondary_ammo": "tacz:9mm",
+      "melee":          "tacz:combat_knife",
+      "armour":         null,
+      "ammo_stack_size": 30
+    },
+    "rifleman": {
+      "primary":        "tacz:ak47",
+      "primary_ammo":   "tacz:7_62x39mm",
+      "secondary":      "tacz:m1911",
+      "secondary_ammo": "tacz:45acp",
+      "melee":          "tacz:combat_knife",
+      "armour":         "minecraft:iron_chestplate",
+      "ammo_stack_size": 30
+    },
+    "support": {
+      "primary":        "tacz:m249",
+      "primary_ammo":   "tacz:5_56x45mm",
+      "secondary":      "tacz:glock17",
+      "secondary_ammo": "tacz:9mm",
+      "melee":          "tacz:combat_knife",
+      "armour":         "minecraft:iron_chestplate",
+      "ammo_stack_size": 50
     }
-  }
+  },
+
+  "_npc_assignments_note": "NPC-to-role assignment is no longer done here. Assign the role script directly to the NPC in CNPC: modules/tacz/roles/<roleId>.js. The role script loads the full system, loads its goal files, and handles all events automatically."
 }
+
+
